@@ -1,0 +1,17 @@
+{
+  "name": "Masroofy - مصروفاتي",
+  "short_name": "Masroofy",
+  "description": "تطبيق متطور لإدارة المصاريف الشخصية والذهب",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0c0c0e",
+  "theme_color": "#fbbf24",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/2489/2489756.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

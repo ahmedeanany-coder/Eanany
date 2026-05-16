@@ -1,0 +1,25 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="512" height="512" fill="black"/>
+  
+  <!-- The Ring Circle -->
+  <circle cx="256" cy="300" r="140" fill="none" stroke="white" stroke-width="16"/>
+  
+  <!-- The Diamond/Geometry on Top -->
+  <path d="M256 120 L190 170 L256 240 L322 170 Z" fill="black" stroke="white" stroke-width="12" stroke-linejoin="round"/>
+  <path d="M190 170 L322 170" fill="none" stroke="white" stroke-width="4"/>
+  <path d="M256 120 L256 170" fill="none" stroke="white" stroke-width="4"/>
+  
+  <!-- Gold Bars inside the ring -->
+  <!-- Bar 1 -->
+  <rect x="200" y="280" width="50" height="80" rx="6" fill="#FACC15" transform="rotate(-15 225 320)">
+    <animate attributeName="opacity" values="0.8;1;0.8" dur="3s" repeatCount="indefinite" />
+  </rect>
+  <!-- Bar 2 -->
+  <rect x="260" y="280" width="50" height="80" rx="6" fill="#EAB308" transform="rotate(15 285 320)">
+    <animate attributeName="opacity" values="1;0.8;1" dur="3s" repeatCount="indefinite" />
+  </rect>
+  
+  <!-- Simple Shine on Gold -->
+  <rect x="210" y="290" width="10" height="40" fill="white" opacity="0.3" transform="rotate(-15 215 310)"/>
+</svg>

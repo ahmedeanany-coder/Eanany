@@ -1,0 +1,79 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_-]+$');
+    }
+
+    // Profile Rules
+    match /profiles/{userId} {
+      allow get: if isOwner(userId);
+      allow create, update: if isOwner(userId) && isValidProfile(request.resource.data);
+      
+      function isValidProfile(data) {
+        return data.goldPrice is number && 
+               data.targetCash is number &&
+               (data.get('dailyBalance', 0) is number) &&
+               (data.get('targetGold', 0) is number) &&
+               (data.get('emergencyFund', 0) is number) &&
+               (data.get('userName', '') is string) &&
+               data.startDate is string &&
+               data.endDate is string &&
+               data.keys().hasAll(['goldPrice', 'targetCash', 'startDate', 'endDate']);
+      }
+
+      // Entries subcollection
+      match /entries/{entryId} {
+        allow list: if isOwner(userId);
+        allow get: if isOwner(userId);
+        allow create, update: if isOwner(userId) && isValidEntry(request.resource.data);
+        allow delete: if isOwner(userId);
+
+        function isValidEntry(data) {
+          return data.year is number &&
+                 data.month is string &&
+                 data.month.size() <= 32 &&
+                 data.order is number &&
+                 (data.get('expenses', []) is list) &&
+                 isValidId(entryId);
+        }
+      }
+    }
+
+    // Gym Rules
+    match /profiles/{userId}/gymSettings/profile {
+      allow get: if isOwner(userId);
+      allow create, update: if isOwner(userId);
+    }
+
+    match /profiles/{userId}/gymSettings/trainingPlan {
+      allow get: if isOwner(userId);
+      allow create, update: if isOwner(userId);
+    }
+
+    match /profiles/{userId}/gymSettings/recovery {
+      allow get: if isOwner(userId);
+      allow create, update: if isOwner(userId);
+    }
+
+    match /profiles/{userId}/workouts/{workoutId} {
+      allow list, get: if isOwner(userId);
+      allow create, update: if isOwner(userId);
+      allow delete: if isOwner(userId);
+    }
+  }
+}

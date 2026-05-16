@@ -1,0 +1,92 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "SF Pro Display", "SF Pro Text", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  
+  --color-brand-yellow: var(--brand-yellow, #fbbf24);
+  --color-brand-primary: var(--brand-primary, #bf953f);
+  --color-brand-secondary: #71717a;
+  --color-brand-accent: #bf953f;
+  --color-brand-green: #22c55e;
+  --color-brand-red: #ef4444;
+  --color-brand-royal: #c5a059;
+  
+  --color-brand-bg: var(--brand-bg, #0c0c0e);
+  --color-brand-card: var(--brand-card, #161618);
+  --color-brand-border: var(--brand-border, rgba(255, 255, 255, 0.05));
+  
+  --background-apple-gradient: linear-gradient(135deg, #bf953f 0%, #c5a059 50%, #bf953f 100%);
+}
+
+:root {
+  --brand-primary: #bf953f;
+  --brand-secondary: #71717a;
+  --brand-accent: #bf953f;
+  --brand-bg: #0c0c0e;
+  --brand-card: #161618;
+  --brand-border: rgba(255, 255, 255, 0.05);
+  --brand-yellow: #fbbf24;
+}
+
+@layer base {
+  html, body {
+    @apply h-full overflow-hidden bg-brand-bg;
+    overscroll-behavior: none;
+  }
+
+  body {
+    @apply text-white antialiased selection:bg-brand-primary selection:text-black scroll-smooth h-full overflow-y-auto font-sans;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+    user-select: none;
+  }
+
+  input, textarea, .allow-select {
+    user-select: text;
+  }
+}
+
+.apple-gradient-text {
+  @apply bg-clip-text text-transparent bg-[image:var(--background-apple-gradient)];
+}
+
+.apple-gradient-bg {
+  @apply bg-[image:var(--background-apple-gradient)] text-black;
+}
+
+.glass {
+  @apply bg-brand-card border border-brand-border shadow-lg;
+}
+
+.card-outline {
+  @apply border border-brand-border shadow-xl;
+}
+
+.glass-darker {
+  @apply bg-black/80 border border-white/10 backdrop-blur-2xl;
+}
+
+.neo-blur {
+  background: radial-gradient(circle at 50% 0%, rgba(0, 240, 255, 0.05), transparent);
+}
+
+.chart-gradient-yellow {
+  background: linear-gradient(180deg, rgba(0, 240, 255, 0.1) 0%, rgba(0, 240, 255, 0) 100%);
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-white/10 rounded-full;
+}
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-white/20;
+}

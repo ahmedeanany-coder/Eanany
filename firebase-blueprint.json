@@ -1,0 +1,132 @@
+{
+  "entities": {
+    "Profile": {
+      "title": "User Profile",
+      "description": "User specific settings and targets",
+      "type": "object",
+      "properties": {
+        "goldPrice": { "type": "number", "description": "سعر الجرام المعتمد" },
+        "dailyBalance": { "type": "number", "description": "رصيد الحساب اليومي" },
+        "targetCash": { "type": "number", "description": "إجمالي الكاش المستهدف" },
+        "targetGold": { "type": "number", "description": "إجمالي الذهب المستهدف" },
+        "userName": { "type": "string" },
+        "emergencyFund": { "type": "number" },
+        "startDate": { "type": "string", "format": "date" },
+        "endDate": { "type": "string", "format": "date" }
+      },
+      "required": ["goldPrice", "targetCash", "emergencyFund", "startDate", "endDate"]
+    },
+    "MonthlyEntry": {
+      "title": "Monthly Saving Entry",
+      "description": "Financial entry for a specific month",
+      "type": "object",
+      "properties": {
+        "year": { "type": "number" },
+        "month": { "type": "string" },
+        "plannedSalary": { "type": "number" },
+        "plannedUber": { "type": "number" },
+        "actualSalary": { "type": "number" },
+        "actualUber": { "type": "number" },
+        "expenses": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "amount": { "type": "number" }
+            }
+          }
+        },
+        "cumulativeCash": { "type": "number" },
+        "goldWeight": { "type": "number" },
+        "notes": { "type": "string" },
+        "order": { "type": "number", "description": "To maintain chronological order" }
+      },
+      "required": ["year", "month", "order"]
+    },
+    "WorkoutSession": {
+      "title": "Workout Session",
+      "description": "A single gym training session",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "format": "date-time" },
+        "title": { "type": "string" },
+        "duration": { "type": "number", "description": "Duration in minutes" },
+        "exercises": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "exerciseName": { "type": "string" },
+              "sets": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "reps": { "type": "number" },
+                    "weight": { "type": "number" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "notes": { "type": "string" }
+      },
+      "required": ["date", "title", "exercises"]
+    },
+    "GymProfile": {
+      "title": "Gym Profile",
+      "description": "User physical metrics and gym goals",
+      "type": "object",
+      "properties": {
+        "currentWeight": { "type": "number" },
+        "goalWeight": { "type": "number" },
+        "height": { "type": "number" },
+        "bodyFat": { "type": "number" },
+        "age": { "type": "number" },
+        "name": { "type": "string" },
+        "location": { "type": "string", "enum": ["gym", "home"] },
+        "equipment": { "type": "array", "items": { "type": "string" } },
+        "isBoarded": { "type": "boolean" }
+      }
+    },
+    "TrainingPlan": {
+      "title": "Training Plan",
+      "description": "AI generated workout plan",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "weeks": { "type": "array" }
+      }
+    }
+  },
+  "firestore": {
+    "/profiles/{userId}": {
+      "schema": "Profile",
+      "description": "Global user settings"
+    },
+    "/profiles/{userId}/entries/{entryId}": {
+      "schema": "MonthlyEntry",
+      "description": "Individual monthly saving data"
+    },
+    "/profiles/{userId}/workouts/{workoutId}": {
+      "schema": "WorkoutSession",
+      "description": "User workout sessions"
+    },
+    "/profiles/{userId}/gymSettings/profile": {
+      "schema": "GymProfile",
+      "description": "User gym-specific metrics"
+    },
+    "/profiles/{userId}/gymSettings/trainingPlan": {
+      "schema": "TrainingPlan",
+      "description": "The active AI training plan"
+    },
+    "/profiles/{userId}/gymSettings/recovery": {
+      "schema": "object",
+      "description": "Muscle recovery state"
+    }
+  }
+}
