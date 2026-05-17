@@ -150,32 +150,35 @@ function getLocalAdvice(data: any, language: 'ar' | 'en') {
 }
 
 export async function getFinancialAdvice(data: any, language: 'ar' | 'en') {
-  const cacheKey = `advice_${language}_${data.profile.savingsTarget}_${new Date().getDate()}`;
-  return callAIWithCache(cacheKey, 1000 * 60 * 60 * 4, async () => {
+  const latestEntry = data.entries[0] || {};
+  const dataSeed = `${latestEntry.expensesTotal || 0}-${latestEntry.savings || 0}-${latestEntry.month || ''}`;
+  const cacheKey = `advice_${language}_v3_${dataSeed}`;
+  
+  return callAIWithCache(cacheKey, 1000 * 60 * 60, async () => {
     try {
-      const response = await callAIWithRetry({
-        contents: `Current Month Data: ${JSON.stringify(data.entries[0])}\nOverall Profile: ${JSON.stringify(data.profile)}`,
-        config: {
-          tools: [{ googleSearch: {} }],
-          systemInstruction: `You are a highly capable AI financial coach, helpful and natural like Google Gemini.
-          LANGUAGE: Respond STRICTLY and COMPLETELY in ${language === 'ar' ? 'Arabic (اللغة العربية)' : 'English'}.
-          If language is Arabic, DO NOT use English letters or words.
-          
-          Role: Intelligent financial mentor for Ahmed (أحمد), an Egyptian user building wealth through gold and savings.
-          Goal: Analyze his data to provide deep insights on spending habits and savings progress.
-          
-          Analysis Sections to Provide:
-          1. **Daily Financial Tip**: A quick, actionable tip.
-          2. **Spending Deep Dive**: Analyze the 'expenses' list if provided in the data. Highlight the top category (Food, Transport, etc.) and suggest ways to save specifically in the Egyptian context (e.g. using public transport vs Uber, cooking at home).
-          3. **Uber & Income Check**: Analyze Uber income vs Net Salary.
-          4. **Savings Trajectory**: Is he on track for his 2028 goal?
-          
-          Style: Professional, encouraging, and highly analytical. Use Markdown headings and bullet points.`,
-        }
+      const response = await fetch('/api/ai/insight', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          data: {
+            profile: data.profile,
+            latestEntry,
+            summary: "Financial coach for Ahmed. Analyze expenses and savings."
+          }, 
+          language 
+        }),
       });
-      return response?.text || getLocalAdvice(data, language);
+      
+      if (response.status === 429) {
+        return getLocalAdvice(data, language);
+      }
+      
+      const result = await response.json();
+      return result.insight || getLocalAdvice(data, language);
     } catch (error: any) {
-      console.warn("AI Service failed after retries, falling back to local advice.");
+      if (!error?.message?.includes('429')) {
+        console.error("Advice Proxy Error:", error);
+      }
       return getLocalAdvice(data, language);
     }
   });
@@ -183,61 +186,40 @@ export async function getFinancialAdvice(data: any, language: 'ar' | 'en') {
 
 export async function askFinancialAI(question: string, context: any, language: 'ar' | 'en') {
   try {
-    const response = await callAIWithRetry({
-      contents: question,
-      config: {
-        tools: [{ googleSearch: {} }],
-        systemInstruction: `You are a helpful AI financial expert, smart and natural like Google Gemini.
-        LANGUAGE: Respond STRICTLY and COMPLETELY in ${language === 'ar' ? 'Arabic (اللغة العربية)' : 'English'}.
-        
-        Persona: Intelligent financial mentor focused on helping Ahmed (أحمد) build his wealth in the Egyptian context (gold market, inflation, EGP).
-        Context: ${JSON.stringify(context)}
-        
-        Guidelines:
-        1. If Ahmed asks to "analyze his expenses" or "track his spending", use the 'expenses' data in the context to provide a category breakdown.
-        2. Give specific advice on reducing costs in Egypt (e.g. mention specific grocery chains, transport options, or inflation-hedging techniques).
-        3. Be encouraging but honest about financial leaks.
-        4. Use Google Search for the latest gold prices (عيار 21, 24) and dollar rates in Egypt.`,
-      }
+    const response = await fetch('/api/ai/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: question, context, language }),
     });
+    
+    if (response.status === 429) {
+      return language === 'ar' 
+        ? "لقد استهلكت جميع المحاولات المتاحة للذكاء الاصطناعي اليوم. جرب مرة أخرى غداً." 
+        : "You've exceeded your AI quota for today. Please try again tomorrow.";
+    }
 
-    return response?.text || (language === 'ar' ? "عذراً، أواجه صعوبة في الاتصال حالياً. حاول مجدداً لاحقاً." : "Sorry, I'm having trouble connecting right now. Please try again later.");
+    const result = await response.json();
+    return result.response || (language === 'ar' ? "عذراً، أواجه صعوبة في الاتصال حالياً." : "Sorry, I'm having trouble connecting right now.");
   } catch (error: any) {
-    console.error("Ask AI Error:", error);
-    return language === 'ar' ? "عذراً، لم أستطع الرد الآن نتيجة ضغط على الشبكة. يرجى المحاولة بعد قليل." : "Sorry, I couldn't respond due to high traffic. Please try again in a bit.";
+    if (!error?.message?.includes('429')) {
+      console.error("Ask AI Proxy Error:", error);
+    }
+    return language === 'ar' ? "عذراً، لم أستطع الرد الآن." : "Sorry, I couldn't respond right now.";
   }
 }
 
 export async function getGoldPrice() {
-  const cacheKey = 'gold_price_egp';
+  const cacheKey = 'gold_price_egp_v2';
   return callAIWithCache(cacheKey, 1000 * 60 * 30, async () => {
     try {
-      const prompt = `
-        Current Date: ${new Date().toISOString()}
-        Task: Provide the current market price of 1 gram of 24k Gold in Egypt in EGP.
-        Requirements: 
-        1. Search for the latest SAGHA price in Egypt.
-        2. Return ONLY the numerical value.
-        3. No text, no currency symbols, just the number (e.g., 4100).
-      `;
-
-      const response = await callAIWithRetry({
-        contents: prompt,
-        config: {
-          tools: [{ googleSearch: {} }]
-        }
-      });
-
-      const text = response?.text || "";
-      const cleanedText = text.replace(/,/g, '').match(/\d+/);
-      if (cleanedText) {
-        const price = parseInt(cleanedText[0]);
-        if (price > 2000 && price < 15000) {
-          return price;
-        }
-      }
-      return 4100;
+      const response = await fetch('/api/gold-price');
+      if (response.status === 429) return 4100;
+      const result = await response.json();
+      return result.price || 4100;
     } catch (error: any) {
+      if (!error?.message?.includes('429')) {
+        console.error("Gold Price Proxy Error:", error);
+      }
       return 4100;
     }
   });

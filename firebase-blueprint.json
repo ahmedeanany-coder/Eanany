@@ -101,6 +101,18 @@
         "description": { "type": "string" },
         "weeks": { "type": "array" }
       }
+    },
+    "GoldTransaction": {
+      "title": "Gold Transaction",
+      "description": "A record of physical gold purchase",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "format": "date-time" },
+        "weight": { "type": "number" },
+        "price": { "type": "number", "description": "Price per unit at purchase" },
+        "notes": { "type": "string" }
+      },
+      "required": ["date", "weight"]
     }
   },
   "firestore": {
@@ -111,6 +123,10 @@
     "/profiles/{userId}/entries/{entryId}": {
       "schema": "MonthlyEntry",
       "description": "Individual monthly saving data"
+    },
+    "/profiles/{userId}/goldLogs/{logId}": {
+      "schema": "GoldTransaction",
+      "description": "User gold purchase history"
     },
     "/profiles/{userId}/workouts/{workoutId}": {
       "schema": "WorkoutSession",

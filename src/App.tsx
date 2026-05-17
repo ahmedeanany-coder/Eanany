@@ -15,7 +15,9 @@ import {
   collection, 
   onSnapshot,
   writeBatch,
-  updateDoc
+  updateDoc,
+  addDoc,
+  deleteDoc
 } from 'firebase/firestore';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -84,7 +86,10 @@ import {
   Activity,
   PlayCircle,
   LayoutGrid,
-  PieChart as LucidePieChart
+  PieChart as LucidePieChart,
+  Receipt,
+  Menu,
+  BarChart3
 } from 'lucide-react';
 import { 
   AreaChart, 
@@ -104,7 +109,7 @@ import {
 import Markdown from 'react-markdown';
 import { auth, db, login, logout, OperationType, handleFirestoreError } from './lib/firebase';
 import { INITIAL_PLAN } from './lib/savingsData';
-import { MonthlyEntry, UserProfile, ExpenseItem } from './types';
+import { MonthlyEntry, UserProfile, ExpenseItem, GoldTransaction } from './types';
 import { cn } from './lib/utils';
 import { getFinancialAdvice, askFinancialAI, getGoldPrice } from './services/aiService';
 import { exportPlanToExcel } from './lib/exportUtils';
@@ -124,7 +129,7 @@ const EXPENSE_CATEGORIES: { id: string; label: string; labelEn: string; icon: an
 
 const CATEGORY_COLORS = ['#ffffff', '#71717a', '#3f3f46', '#27272a', '#a1a1aa', '#52525b', '#18181b', '#d4d4d8'];
 
-const THEME_IDS = ['dark', 'light', 'midnight', 'forest', 'sunset', 'ocean', 'luxury', 'minimal'];
+const THEME_IDS = ['royal', 'light', 'midnight', 'nebula', 'mint', 'lava', 'aurora', 'coffee', 'slate'];
 
 const DEFAULT_PROFILE: UserProfile = {
   goldPrice: 8000,
@@ -171,12 +176,18 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [isBiometricVerified, setIsBiometricVerified] = useState(true);
   const [password, setPassword] = useState('');
-  const [currentProject, setCurrentProject] = useState<'savings' | 'daily' | 'expenses' | 'settings'>('savings');
+  const [currentProject, setCurrentProject] = useState<'savings' | 'daily' | 'expenses' | 'settings' | 'gold' | 'stats' | 'ai'>('savings');
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [filterCategory, setFilterCategory] = useState<string | null>(null);
-  const [theme, setTheme] = useState<'dark' | 'light' | 'forest' | 'midnight' | 'sunset' | 'ocean' | 'minimal' | 'luxury'>('dark');
+  const [theme, setTheme] = useState<'royal' | 'light' | 'midnight' | 'nebula' | 'mint' | 'lava' | 'aurora' | 'coffee' | 'slate'>(() => {
+    if (typeof window !== 'undefined') {
+      return (localStorage.getItem('app-theme') as any) || 'royal';
+    }
+    return 'royal';
+  });
   
   // Theme Helper
-  const isDark = useMemo(() => theme !== 'light' && theme !== 'minimal', [theme]);
+  const isDark = useMemo(() => theme !== 'light' && theme !== 'slate' && theme !== 'coffee', [theme]);
 
   const [resetState, setResetState] = useState<{
     step: 'none' | 'otp' | 'new-password';
@@ -187,23 +198,25 @@ export default function App() {
   const [bioError, setBioError] = useState<string | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [entries, setEntries] = useState<MonthlyEntry[]>([]);
+  const [goldLogs, setGoldLogs] = useState<GoldTransaction[]>([]);
   const [currentGoldPrice, setCurrentGoldPrice] = useState(8000);
   
   // Update Theme Body Class
   useEffect(() => {
     if (typeof document !== 'undefined') {
       const themes: Record<string, { bg: string, text: string, card: string, border: string, primary: string }> = {
-        dark: { bg: '#0c0c0e', text: 'white', card: '#161618', border: 'rgba(255, 255, 255, 0.05)', primary: '#fbbf24' },
+        royal: { bg: '#000000', text: '#ffffff', card: '#0a0a0c', border: 'rgba(212, 175, 55, 0.15)', primary: '#d4af37' },
         light: { bg: '#ffffff', text: '#0f172a', card: '#f8fafc', border: '#e2e8f0', primary: '#0f172a' },
-        forest: { bg: '#061a14', text: '#ecfdf5', card: '#0a2a20', border: 'rgba(52, 211, 153, 0.1)', primary: '#10b981' },
-        midnight: { bg: '#020617', text: '#f1f5f9', card: '#0f172a', border: 'rgba(99, 102, 241, 0.1)', primary: '#6366f1' },
-        sunset: { bg: '#1a0d14', text: '#fff1f2', card: '#2d1622', border: 'rgba(244, 63, 94, 0.1)', primary: '#f43f5e' },
-        ocean: { bg: '#031721', text: '#f0f9ff', card: '#0c2a3b', border: 'rgba(14, 165, 233, 0.1)', primary: '#0ea5e9' },
-        minimal: { bg: '#f8fafc', text: '#1e293b', card: '#ffffff', border: '#f1f5f9', primary: '#1e293b' },
-        luxury: { bg: '#000000', text: '#fafafa', card: '#111111', border: 'rgba(212, 175, 55, 0.1)', primary: '#d4af37' }
+        midnight: { bg: '#020617', text: '#f1f5f9', card: '#0f172a', border: 'rgba(59, 130, 246, 0.1)', primary: '#3b82f6' },
+        nebula: { bg: '#0f0114', text: '#faf5ff', card: '#1a0221', border: 'rgba(217, 70, 239, 0.15)', primary: '#d946ef' },
+        mint: { bg: '#050f0d', text: '#f0fdf4', card: '#0a1a16', border: 'rgba(16, 185, 129, 0.1)', primary: '#10b981' },
+        lava: { bg: '#0c0c0c', text: '#fff7ed', card: '#1a1a1a', border: 'rgba(249, 115, 22, 0.15)', primary: '#f97316' },
+        aurora: { bg: '#05191c', text: '#f0fdfa', card: '#0a2a2e', border: 'rgba(45, 212, 191, 0.15)', primary: '#2dd4bf' },
+        coffee: { bg: '#fdfaf6', text: '#431407', card: '#ffffff', border: '#f3e8df', primary: '#b45309' },
+        slate: { bg: '#f8fafc', text: '#1e293b', card: '#ffffff', border: '#e2e8f0', primary: '#64748b' }
       };
 
-      const selectedTheme = themes[theme] || themes.dark;
+      const selectedTheme = themes[theme] || themes.royal;
       const root = document.documentElement;
       
       document.body.style.backgroundColor = selectedTheme.bg;
@@ -217,10 +230,11 @@ export default function App() {
       root.style.setProperty('--brand-primary', selectedTheme.primary);
       
       // Update global classes
-      root.classList.remove('dark', 'light', 'forest', 'midnight', 'sunset', 'ocean', 'minimal', 'luxury');
+      root.classList.remove('royal', 'light', 'midnight', 'nebula', 'mint', 'lava', 'aurora', 'coffee', 'slate');
       root.classList.add(theme);
       
-      if (isDark) {
+      const themeIsDark = theme !== 'light' && theme !== 'slate' && theme !== 'coffee';
+      if (themeIsDark) {
         root.classList.add('dark');
         root.classList.remove('light');
       } else {
@@ -228,7 +242,7 @@ export default function App() {
         root.classList.remove('dark');
       }
     }
-  }, [theme, isDark]);
+  }, [theme]);
 
   // Haptic feedback helper
   const vibrate = useCallback((pattern: number | number[] = 10) => {
@@ -258,7 +272,27 @@ export default function App() {
   });
   const [newGoldLog, setNewGoldLog] = useState({ weight: '', price: '', notes: '' });
 
-  // AI States
+  const handleAddGoldLog = async () => {
+    if (!user) return;
+    try {
+      const goldLogsRef = collection(db, 'profiles', user.uid, 'goldLogs');
+      const weight = Number(newGoldLog.weight);
+      const price = Number(newGoldLog.price) || currentGoldPrice;
+      
+      await addDoc(goldLogsRef, {
+        weight,
+        price,
+        notes: newGoldLog.notes,
+        date: new Date().toISOString()
+      });
+      
+      setIsAddingGoldLog(false);
+      setNewGoldLog({ weight: '', price: '', notes: '' });
+      vibrate(20);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'goldLogs/add');
+    }
+  };
   const [aiAdvice, setAiAdvice] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [chatMessage, setChatMessage] = useState('');
@@ -268,6 +302,8 @@ export default function App() {
   const [showValues, setShowValues] = useState(false);
   const [aiInsight, setAiInsight] = useState<string | null>(null);
   const [isLoadingInsight, setIsLoadingInsight] = useState(false);
+  const [isSmartLoading, setIsSmartLoading] = useState(false);
+  const [smartInput, setSmartInput] = useState('');
   const [goldWeightInput, setGoldWeightInput] = useState<string>('');
   const [dailyInput, setDailyInput] = useState('');
   const [quickAmount, setQuickAmount] = useState('');
@@ -447,41 +483,6 @@ export default function App() {
     }
   };
 
-  const handleAddGoldLog = async () => {
-    if (!user || !profile) return;
-    const weight = Number(newGoldLog.weight);
-    const price = Number(newGoldLog.price);
-    if (isNaN(weight) || weight <= 0) return;
-
-    try {
-      const profileRef = doc(db, 'profiles', user.uid);
-      const newLog = {
-        id: crypto.randomUUID(),
-        date: new Date().toISOString(),
-        weight: weight,
-        pricePerUnit: price || currentGoldPrice,
-        notes: newGoldLog.notes
-      };
-      const updatedLogs = [...(profile.goldLogs || []), newLog];
-      await updateDoc(profileRef, { goldLogs: updatedLogs });
-      setIsAddingGoldLog(false);
-      setNewGoldLog({ weight: '', price: '', notes: '' });
-    } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, 'gold-log');
-    }
-  };
-
-  const handleDeleteGoldLog = async (id: string) => {
-    if (!user || !profile) return;
-    try {
-      const profileRef = doc(db, 'profiles', user.uid);
-      const updatedLogs = (profile.goldLogs || []).filter(l => l.id !== id);
-      await updateDoc(profileRef, { goldLogs: updatedLogs });
-    } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, 'gold-log-delete');
-    }
-  };
-
   const handleDeleteExpense = async (expenseId: string, recurringId?: string) => {
     if (!user || !selectedMonthId || !selectedEntry) return;
     
@@ -651,35 +652,20 @@ export default function App() {
       handleFirestoreError(error, OperationType.LIST, 'entries');
     });
 
+    const goldLogsRef = collection(db, 'profiles', user.uid, 'goldLogs');
+    const unsubGold = onSnapshot(goldLogsRef, (snap) => {
+      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() } as GoldTransaction));
+      setGoldLogs(docs);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'goldLogs');
+    });
+
     return () => {
       unsubProfile();
       unsubEntries();
+      unsubGold();
     };
   }, [user]);
-
-  // AI Advice Trigger
-  useEffect(() => {
-    if (user && profile && entries.length > 0) {
-      const fetchAdvice = async () => {
-        setAiLoading(true);
-        // Only clear advice if we don't have one yet, to avoid flicker on updates
-        if (!aiAdvice) setAiAdvice(null);
-        
-        try {
-          const advice = await getFinancialAdvice({ profile, entries: entries.slice(0, 10) }, language);
-          setAiAdvice(advice);
-        } catch (err: any) {
-          console.error("Advice Fetch Error:", err);
-          // Centralized aiService now handles fallbacks, but we add a safety net here
-          setAiAdvice(language === 'ar' ? "تعذر جلب النصيحة حالياً. يرجى المحاولة لاحقاً." : "Could not fetch advice. Please try again later.");
-        } finally {
-          setAiLoading(false);
-        }
-      };
-      
-      fetchAdvice();
-    }
-  }, [user?.uid, profile?.userName, entries.length, language]);
 
   // Handle OTP steps normally if still used
   const handleStartReset = () => {
@@ -762,7 +748,8 @@ export default function App() {
       const plannedSalary = Number(entry.plannedSalary) || 0;
       const plannedUber = Number(entry.plannedUber) || 0;
       
-      currentCashTotal += (actualSalary + actualUber - expensesTotal);
+      const monthlySavings = (actualSalary + actualUber - expensesTotal);
+      currentCashTotal += monthlySavings;
       currentPlannedTotal += (plannedSalary + plannedUber);
 
       // Category breakdown for this entry
@@ -795,6 +782,7 @@ export default function App() {
         actualSalary,
         actualUber,
         expensesTotal,
+        monthlySavings,
         cumulativeCash: currentCashTotal,
         goldValue: currentCashTotal, 
         cumulativePlanned: currentPlannedTotal,
@@ -814,7 +802,7 @@ export default function App() {
     const progressMonths = Math.min(monthsPassed + 1, computedEntries.length);
     const totalMonths = computedEntries.length;
 
-    const totalGoldLogged = (profile.goldLogs || []).reduce((acc, curr) => acc + (Number(curr.weight) || 0), 0);
+    const totalGoldLogged = goldLogs.reduce((acc, curr) => acc + (Number(curr.weight) || 0), 0);
 
     return {
       computedEntries,
@@ -824,9 +812,10 @@ export default function App() {
       progressMonths,
       totalMonths,
       progressPercentage: Math.min(((currentEntry?.cumulativeCash || 0) / (profile?.targetCash || 1)) * 100, 100),
-      totalGoldLogged
+      totalGoldLogged,
+      totalGoldValue: totalGoldLogged * currentGoldPrice
     };
-  }, [entries, profile, currentGoldPrice, language]);
+  }, [entries, profile, currentGoldPrice, language, goldLogs]);
 
   const selectedEntry = useMemo(() => {
     return stats?.computedEntries.find(e => e.id === selectedMonthId) || stats?.currentMonth || null;
@@ -835,12 +824,11 @@ export default function App() {
   // AI Insight Fetcher
   useEffect(() => {
     const fetchAiInsight = async () => {
-      if (!selectedEntry || !selectedEntry.expenses || selectedEntry.expenses.length < 2) {
+      if (!selectedEntry || !selectedEntry.expenses || selectedEntry.expenses.length < 1) {
         setAiInsight(null);
         return;
       }
       
-      // Only fetch if data has changed significantly or we don't have an insight yet
       setIsLoadingInsight(true);
       try {
         const response = await fetch('/api/ai/insight', {
@@ -848,7 +836,7 @@ export default function App() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ 
             data: {
-              expenses: selectedEntry.expenses,
+              expenses: selectedEntry.expenses.slice(-15), // Send last 15 for context
               total: selectedEntry.expensesTotal,
               month: selectedEntry.month,
               year: selectedEntry.year
@@ -856,22 +844,113 @@ export default function App() {
             language 
           }),
         });
+
+        if (response.status === 429) {
+          // Silent fallback for quota errors
+          setAiInsight(null);
+          return;
+        }
+
         const result = await response.json();
         if (result.insight) {
           setAiInsight(result.insight);
+        } else if (result.error) {
+          if (response.status !== 429) {
+            console.error('AI Insight Error:', result.error);
+          }
+          setAiInsight(null);
         }
       } catch (error) {
-        console.error('Failed to fetch AI insight:', error);
+        // Only log if it's not a fetch error caused by likely network/abort
+        if (!(error instanceof Error && error.name === 'AbortError')) {
+          console.warn('AI insight fetch suppressed or failed');
+        }
+        setAiInsight(null);
       } finally {
         setIsLoadingInsight(false);
       }
     };
 
-    const timer = setTimeout(fetchAiInsight, 1000); // Debounce
+    const timer = setTimeout(fetchAiInsight, 1500); // Debounce a bit more
     return () => clearTimeout(timer);
   }, [selectedEntry?.id, (selectedEntry?.expenses || []).length, language]);
 
-  // Cleanup / Reset function
+  // AI Advice Trigger
+  useEffect(() => {
+    if (user && profile && entries.length > 0) {
+      const fetchAdvice = async () => {
+        setAiLoading(true);
+        // Only clear advice if we don't have one yet, to avoid flicker on updates
+        if (!aiAdvice) setAiAdvice(null);
+        
+        try {
+          // We pass the entries REVERSED so the most recent is entries[0]
+          const advice = await getFinancialAdvice({ profile, entries: [...entries].reverse().slice(0, 5) }, language);
+          setAiAdvice(advice);
+        } catch (err: any) {
+          console.error("Advice Fetch Error:", err);
+          // Centralized aiService now handles fallbacks, but we add a safety net here
+          setAiAdvice(language === 'ar' ? "تعذر جلب النصيحة حالياً. يرجى المحاولة لاحقاً." : "Could not fetch advice. Please try again later.");
+        } finally {
+          setAiLoading(false);
+        }
+      };
+      
+      fetchAdvice();
+    }
+  }, [user?.uid, profile?.userName, entries.length, language, selectedEntry?.expensesTotal]);
+
+  const handleSmartAdd = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!smartInput.trim() || !selectedEntry) return;
+
+    setIsSmartLoading(true);
+    vibrate(10);
+    try {
+      const response = await fetch('/api/ai/parse-expense', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: smartInput, language }),
+      });
+
+      if (response.status === 429) {
+        alert(language === 'ar' ? "نفذت حصة الذكاء الاصطناعي اليوم. يرجى المحاولة لاحقاً." : "AI quota exceeded. Please try again later.");
+        return;
+      }
+
+      const data = await response.json();
+      
+      if (data.amount && data.description) {
+        const expense: Partial<ExpenseItem> = {
+          description: data.description,
+          amount: data.amount,
+          category: data.category || 'other',
+          date: new Date().toISOString().split('T')[0],
+          isInstallment: !!data.isInstallment
+        };
+
+        if (data.isInstallment && data.installmentsCount) {
+          // Add installments logic if needed, for now just add as one
+          // Real apps would loop, but I'll stick to a simple add for now
+        }
+
+        const updatedExpenses = [...(selectedEntry.expenses || []), { ...expense, id: Date.now().toString() } as ExpenseItem];
+        const expensesTotal = updatedExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
+        
+        await updateDoc(doc(db, 'entries', selectedEntry.id), {
+          expenses: updatedExpenses,
+          expensesTotal
+        });
+
+        setSmartInput('');
+        vibrate([10, 20, 10]);
+      }
+    } catch (error) {
+      console.error('Smart add failed:', error);
+    } finally {
+      setIsSmartLoading(false);
+    }
+  };
   const handleResetData = async () => {
     if (!user || !window.confirm('هل أنت متأكد من مسح جميع البيانات وإعادة ضبط الخطة؟')) return;
     try {
@@ -1025,80 +1104,467 @@ export default function App() {
       <header className={cn(
         "sticky top-0 z-40 backdrop-blur-xl border-b px-6 py-4 flex items-center justify-between transition-all duration-500 bg-brand-bg/80 border-brand-border"
       )}>
-          <div className="flex items-center gap-3">
-             <div className={cn(
-               "w-10 h-10 rounded-xl flex items-center justify-center p-1 shadow-lg overflow-hidden",
-               isDark ? "bg-white shadow-white/5" : "bg-black shadow-black/5"
-             )}>
-                <img 
-                  src="/public/profile.jpg" 
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).src = 'https://img.icons8.com/color/48/user-male-circle--v1.png';
-                  }}
-                  className="w-full h-full object-cover rounded-lg"
-                  alt="E"
-                />
-             </div>
+          <div className="flex items-center gap-4">
+             <button 
+               onClick={() => setIsSidebarOpen(true)}
+               className={cn(
+                 "p-2 rounded-xl transition-all",
+                 isDark ? "hover:bg-white/10 text-white" : "hover:bg-slate-100 text-slate-900"
+               )}
+             >
+               <Menu className="w-6 h-6" />
+             </button>
              <h1 className={cn(
                "text-xl font-black italic tracking-tighter uppercase",
                isDark ? "text-white" : "text-slate-900"
              )}>
-               EANANY <span className={isDark ? "text-white/40" : "text-slate-400"}>$AVING</span>
+                EANANY <span className={isDark ? "text-white/40" : "text-slate-400"}>SAVING</span>
              </h1>
           </div>
 
           <div className="flex items-center gap-4">
-             <button 
-               onClick={() => {
-                 const nextThemeIndex = (THEME_IDS.indexOf(theme as any) + 1) % THEME_IDS.length;
-                 setTheme(THEME_IDS[nextThemeIndex] as any);
-                 vibrate(5);
-               }}
-               className={cn(
-                  "p-2 rounded-xl transition-all",
-                  isDark ? "bg-white/5 border border-white/10" : "bg-slate-100 border border-slate-200"
-               )}
-             >
-               {isDark ? <Zap className="w-5 h-5 text-brand-yellow" /> : <Palette className="w-5 h-5 text-slate-600" />}
-             </button>
-             <button 
-               onClick={() => setShowValues(!showValues)}
-               className={cn(
-                 "transition-colors p-1",
-                 isDark ? "text-white hover:text-white/70" : "text-slate-900 hover:text-slate-700"
-               )}
-               title={showValues ? (language === 'ar' ? 'إخفاء القيم' : 'Hide Values') : (language === 'ar' ? 'إظهار القيم' : 'Show Values')}
-             >
-               {showValues ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-             </button>
-             <button 
-               onClick={() => profile && exportPlanToExcel(profile, entries)}
-               className="text-white hover:text-white/70 transition-colors"
-             >
-               <Download className="w-5 h-5" />
-             </button>
-             <button 
-               onClick={() => setLanguage(language === 'ar' ? 'en' : 'ar')}
-               className="text-[10px] font-black border border-white/20 px-2 py-1 rounded"
-             >
-               {language === 'ar' ? 'EN' : 'AR'}
-             </button>
-             <div className="w-10 h-10 rounded-full border-2 border-white/20 p-[2px] bg-black shadow-xl overflow-hidden group active:scale-95 transition-transform">
-                <div className="w-full h-full rounded-full border border-white/10 overflow-hidden bg-white">
-                  <img 
-                    src="/public/profile.jpg" 
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).src = user.photoURL || 'https://img.icons8.com/color/96/user-male-circle--v1.png';
-                    }}
-                    alt="" 
-                    className="w-full h-full object-cover" 
-                  />
-                </div>
+             <div className="w-8 h-8 rounded-full border border-brand-yellow/20 p-0.5 bg-white overflow-hidden shadow-sm">
+                <img 
+                  src="/public/profile.jpg" 
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).src = user?.photoURL || 'https://img.icons8.com/color/96/user-male-circle--v1.png';
+                  }}
+                  alt="" 
+                  className="w-full h-full object-cover rounded-full"
+                />
              </div>
           </div>
-      </header>
+       </header>
+      
+      {/* Side Menu Drawer */}
+      <AnimatePresence mode="wait">
+        {isSidebarOpen && (
+          <>
+            {/* Backdrop */}
+            <motion.div 
+               initial={{ opacity: 0 }}
+               animate={{ opacity: 1 }}
+               exit={{ opacity: 0 }}
+               onClick={() => setIsSidebarOpen(false)}
+               className="fixed inset-0 bg-black/80 backdrop-blur-md z-[100]"
+            />
+            
+            <motion.div 
+              initial={{ x: language === 'ar' ? '100%' : '-100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: language === 'ar' ? '100%' : '-100%' }}
+              transition={{ type: "spring", damping: 25, stiffness: 300 }}
+              className={cn(
+                "fixed top-0 bottom-0 w-80 z-[101] shadow-2xl flex flex-col p-8 overflow-y-auto",
+                language === 'ar' ? "right-0 rounded-l-[40px]" : "left-0 rounded-r-[40px]",
+                isDark ? "bg-slate-900 border-white/10" : "bg-white border-slate-200"
+              )}
+            >
+              <div className="flex flex-col gap-6 mb-12">
+                 <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                       <div className="w-12 h-12 rounded-2xl border-2 border-brand-yellow/20 p-1 bg-white overflow-hidden shadow-xl">
+                          <img 
+                            src="/public/profile.jpg" 
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).src = user.photoURL || 'https://img.icons8.com/color/96/user-male-circle--v1.png';
+                            }}
+                            alt="" 
+                            className="w-full h-full object-cover rounded-xl"
+                          />
+                       </div>
+                       <div>
+                          <h2 className={cn("text-lg font-black italic tracking-tighter uppercase leading-none", isDark ? "text-white" : "text-slate-900")}>EANANY</h2>
+                          <span className="text-[10px] font-bold text-brand-yellow uppercase tracking-[0.2em]">SAVING</span>
+                       </div>
+                    </div>
+                    <button 
+                      onClick={() => setIsSidebarOpen(false)}
+                      className={cn(
+                        "p-2 rounded-xl transition-all",
+                        isDark ? "bg-white/5 text-slate-400" : "bg-slate-100 text-slate-500"
+                      )}
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                 </div>
 
-      {currentProject === 'daily' ? (
+                 {/* Toolbox Section */}
+                 <div className={cn(
+                   "p-3 rounded-3xl border flex items-center justify-around",
+                   isDark ? "bg-white/5 border-white/5" : "bg-slate-50 border-slate-200"
+                 )}>
+                    <button 
+                      onClick={() => setShowValues(!showValues)}
+                      className={cn(
+                        "p-3 rounded-2xl transition-all",
+                        isDark ? "hover:bg-white/10 text-slate-400 hover:text-white" : "hover:bg-white text-slate-500 shadow-sm"
+                      )}
+                      title={language === 'ar' ? 'إظهار/إخفاء' : 'Show/Hide'}
+                    >
+                       {showValues ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                    </button>
+                    <button 
+                      onClick={() => profile && exportPlanToExcel(profile, entries)}
+                      className={cn(
+                        "p-3 rounded-2xl transition-all",
+                        isDark ? "hover:bg-white/10 text-slate-400 hover:text-white" : "hover:bg-white text-slate-500 shadow-sm"
+                      )}
+                      title={language === 'ar' ? 'تصدير إكسل' : 'Export Excel'}
+                    >
+                       <Download className="w-5 h-5" />
+                    </button>
+                    <button 
+                      onClick={() => setLanguage(language === 'ar' ? 'en' : 'ar')}
+                      className={cn(
+                        "px-4 py-3 rounded-2xl transition-all font-black text-xs italic",
+                        isDark ? "hover:bg-white/10 text-slate-400 hover:text-white" : "hover:bg-white text-slate-500 shadow-sm"
+                      )}
+                    >
+                       {language === 'ar' ? 'EN' : 'AR'}
+                    </button>
+                    <button 
+                      onClick={() => {
+                        const nextThemeIndex = (THEME_IDS.indexOf(theme as any) + 1) % THEME_IDS.length;
+                        setTheme(THEME_IDS[nextThemeIndex] as any);
+                        vibrate(5);
+                      }}
+                      className={cn(
+                        "p-3 rounded-2xl transition-all",
+                        isDark ? "hover:bg-white/10 text-slate-400 hover:text-white" : "hover:bg-white text-slate-500 shadow-sm"
+                      )}
+                    >
+                       {isDark ? <Zap className="w-5 h-5 text-brand-yellow" /> : <Palette className="w-5 h-5" />}
+                    </button>
+                 </div>
+              </div>
+
+              <div className="space-y-3 flex-1">
+                 <NavButton 
+                    active={currentProject === 'savings'} 
+                    onClick={() => { setCurrentProject('savings'); setIsSidebarOpen(false); }}
+                    icon={<Wallet className="w-5 h-5" />}
+                    label={language === 'ar' ? 'ادخار' : 'Savings'}
+                    isDark={isDark}
+                 />
+                 <NavButton 
+                    active={currentProject === 'expenses'} 
+                    onClick={() => { setCurrentProject('expenses'); setIsSidebarOpen(false); }}
+                    icon={<Receipt className="w-5 h-5" />}
+                    label={language === 'ar' ? 'المصروفات' : 'Expenses'}
+                    isDark={isDark}
+                 />
+                 <NavButton 
+                    active={currentProject === 'gold'} 
+                    onClick={() => { setCurrentProject('gold'); setIsSidebarOpen(false); }}
+                    icon={<Coins className="w-5 h-5" />}
+                    label={language === 'ar' ? 'الذهب' : 'Gold Tracker'}
+                    isDark={isDark}
+                 />
+                 <NavButton 
+                    active={currentProject === 'daily'} 
+                    onClick={() => { setCurrentProject('daily'); setIsSidebarOpen(false); }}
+                    icon={<Calendar className="w-5 h-5" />}
+                    label={language === 'ar' ? 'الرصيد اليومي' : 'Daily Balance'}
+                    isDark={isDark}
+                 />
+                 <NavButton 
+                    active={currentProject === 'stats'} 
+                    onClick={() => { setCurrentProject('stats'); setIsSidebarOpen(false); }}
+                    icon={<BarChart3 className="w-5 h-5" />}
+                    label={language === 'ar' ? 'الإحصائيات' : 'Statistics'}
+                    isDark={isDark}
+                 />
+                 <NavButton 
+                    active={currentProject === 'ai'} 
+                    onClick={() => { setCurrentProject('ai'); setIsSidebarOpen(false); }}
+                    icon={<Sparkles className="w-5 h-5" />}
+                    label={language === 'ar' ? 'المساعد الذكي' : 'AI Assistant'}
+                    isDark={isDark}
+                 />
+                 <NavButton 
+                    active={currentProject === 'settings'} 
+                    onClick={() => { setCurrentProject('settings'); setIsSidebarOpen(false); }}
+                    icon={<Settings className="w-5 h-5" />}
+                    label={language === 'ar' ? 'الإعدادات' : 'Settings'}
+                    isDark={isDark}
+                 />
+              </div>
+
+              <div className="mt-8 p-6 rounded-[30px] bg-brand-yellow/10 border border-brand-yellow/20">
+                 <p className="text-[10px] font-black uppercase tracking-widest text-brand-yellow mb-2">Version 4.2.0</p>
+                 <p className="text-xs text-slate-500 font-medium">
+                   {language === 'ar' ? 'تحكم في مستقبلك المالي بكل ذكاء مع فلوستي.' : 'Control your financial future smartly with Flossy.'}
+                 </p>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {currentProject === 'gold' ? (
+        <div className="max-w-4xl mx-auto space-y-8 px-4 mb-24 animate-in fade-in slide-in-from-bottom-4 duration-500">
+           <div className={cn("rounded-[40px] p-8 border transition-all", isDark ? "glass border-white/10" : "bg-white border-slate-200 shadow-sm")}>
+              <div className="flex items-center gap-4 mb-8">
+                 <div className="w-14 h-14 rounded-2xl bg-amber-400/10 flex items-center justify-center">
+                    <Coins className="w-8 h-8 text-amber-400" />
+                 </div>
+                 <div>
+                    <h2 className={cn("text-3xl font-black italic uppercase tracking-tighter", isDark ? "text-white" : "text-slate-900")}>
+                       {language === 'ar' ? 'متتبع الذهب' : 'Gold Tracker'}
+                    </h2>
+                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest leading-loose">
+                       {language === 'ar' ? 'سجل حيازتك من الذهب وراقب قيمتها لحظة بلحظة' : 'Track your gold physical holdings and monitor live value'}
+                    </p>
+                 </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
+                 <div className={cn("p-8 rounded-3xl border flex flex-col justify-between", isDark ? "bg-white/5 border-white/5" : "bg-slate-50 border-slate-100")}>
+                    <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{language === 'ar' ? 'إجمالي الوزن' : 'Total Weight'}</span>
+                    <div className="mt-2 text-5xl font-black italic text-brand-yellow">
+                       {(stats?.totalGoldLogged || 0).toFixed(1)} <span className="text-sm font-bold uppercase">Unit</span>
+                    </div>
+                 </div>
+                 <div className={cn("p-8 rounded-3xl border flex flex-col justify-between", isDark ? "bg-white/5 border-white/5" : "bg-slate-50 border-slate-100")}>
+                    <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{language === 'ar' ? 'القيمة الإجمالية' : 'Total Value'}</span>
+                    <div className={cn("mt-2 text-5xl font-black italic transition-all duration-500", isDark ? "text-white" : "text-slate-900", !showValues && "blur-xl")}>
+                       {(stats?.currentMonth?.goldValue || 0).toLocaleString()} <span className="text-sm font-bold uppercase">EGP</span>
+                    </div>
+                 </div>
+              </div>
+
+              <div className="space-y-4">
+                 <div className="flex items-center justify-between px-2">
+                    <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{language === 'ar' ? 'سجل العمليات' : 'Transaction History'}</h3>
+                    <button 
+                      onClick={() => setIsAddingGoldLog(true)}
+                      className="text-[10px] font-black uppercase text-brand-yellow hover:underline"
+                    >
+                       {language === 'ar' ? '+ إضافة جديد' : '+ Add New'}
+                    </button>
+                 </div>
+                 <div className="space-y-3">
+                    {goldLogs && goldLogs.length > 0 ? (
+                       [...goldLogs].reverse().map(log => (
+                          <div key={log.id} className={cn("p-6 rounded-3xl border flex items-center justify-between group transition-all", isDark ? "bg-white/2 border-white/5" : "bg-white border-slate-100 shadow-sm")}>
+                             <div className="flex items-center gap-4">
+                                <div className="w-10 h-10 rounded-xl bg-amber-400/10 flex items-center justify-center">
+                                   <Coins className="w-5 h-5 text-amber-400" />
+                                </div>
+                                <div>
+                                   <div className={cn("text-sm font-black italic", isDark ? "text-white" : "text-slate-900")}>{log.weight} Unit</div>
+                                   <div className="text-[10px] text-slate-500 font-bold uppercase">{log.notes || (language === 'ar' ? 'عملية شراء' : 'Purchase')}</div>
+                                </div>
+                             </div>
+                             <div className="text-right flex items-center gap-6">
+                                <div className="hidden sm:block">
+                                   <div className="text-[10px] text-slate-500 font-bold uppercase">{language === 'ar' ? 'السعر' : 'Price'}</div>
+                                   <div className={cn("text-xs font-black", isDark ? "text-slate-300" : "text-slate-600")}>{log.price?.toLocaleString()}</div>
+                                </div>
+                                <button 
+                                  onClick={async () => {
+                                    if (!user) return;
+                                    if (window.confirm(language === 'ar' ? 'حذف هذه العملية؟' : 'Delete this entry?')) {
+                                      try {
+                                        await deleteDoc(doc(db, 'profiles', user.uid, 'goldLogs', log.id));
+                                      } catch (err) {
+                                        handleFirestoreError(err, OperationType.DELETE, 'gold-log');
+                                      }
+                                    }
+                                  }}
+                                  className="p-2 opacity-0 group-hover:opacity-100 transition-all text-slate-500 hover:text-brand-red"
+                                >
+                                   <Trash2 className="w-4 h-4" />
+                                </button>
+                             </div>
+                          </div>
+                       ))
+                    ) : (
+                       <div className="py-20 text-center opacity-30">
+                          <Coins className="w-12 h-12 mx-auto mb-4" />
+                          <p className="text-[10px] font-bold uppercase tracking-widest">{language === 'ar' ? 'لا توجد بيانات مسجلة' : 'No recorded data'}</p>
+                       </div>
+                    )}
+                 </div>
+              </div>
+           </div>
+        </div>
+      ) : currentProject === 'stats' ? (
+        <div className="max-w-6xl mx-auto space-y-8 px-4 mb-24 animate-in fade-in slide-in-from-bottom-4 duration-500">
+           <div className={cn("rounded-[40px] p-8 border transition-all", isDark ? "glass border-white/10" : "bg-white border-slate-200 shadow-sm")}>
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-12">
+                 <div>
+                    <h2 className={cn("text-4xl font-black italic uppercase tracking-tighter", isDark ? "text-white" : "text-slate-900")}>
+                       {language === 'ar' ? 'تحليل النمو' : 'Growth Analytics'}
+                    </h2>
+                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest leading-loose mt-2">
+                       {language === 'ar' ? 'رؤية عميقة لذكاء مستقبلك المالي' : 'Deep insights into your financial future intelligence'}
+                    </p>
+                 </div>
+                 <div className="flex items-center gap-3">
+                    <div className={cn("px-6 py-3 rounded-2xl border flex flex-col", isDark ? "bg-white/5 border-white/5" : "bg-slate-50 border-slate-100")}>
+                       <span className="text-[8px] font-black text-slate-500 uppercase">{language === 'ar' ? 'صافي الثروة' : 'Net Worth'}</span>
+                       <span className="text-xl font-black italic">{( (stats?.currentMonth?.cumulativeCash || 0) + (stats?.totalGoldValue || 0) ).toLocaleString()} <span className="text-[10px]">EGP</span></span>
+                    </div>
+                 </div>
+              </div>
+              
+              <div className="h-[400px] w-full mb-12 relative">
+                 <div className="absolute top-4 left-4 z-10">
+                    <div className="flex items-center gap-4">
+                       <div className="flex items-center gap-2">
+                          <div className="w-3 h-3 rounded-full bg-brand-yellow" />
+                          <span className="text-[8px] font-black uppercase text-slate-500">{language === 'ar' ? 'فعلي' : 'Actual'}</span>
+                       </div>
+                       <div className="flex items-center gap-2">
+                          <div className="w-3 h-3 rounded-full bg-slate-400 opacity-30" />
+                          <span className="text-[8px] font-black uppercase text-slate-500">{language === 'ar' ? 'مخطط' : 'Planned'}</span>
+                       </div>
+                    </div>
+                 </div>
+                 <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={stats?.computedEntries}>
+                       <defs>
+                          <linearGradient id="colorCumul" x1="0" y1="0" x2="0" y2="1">
+                             <stop offset="5%" stopColor="#fbbf24" stopOpacity={0.3}/>
+                             <stop offset="95%" stopColor="#fbbf24" stopOpacity={0}/>
+                          </linearGradient>
+                       </defs>
+                       <CartesianGrid strokeDasharray="3 3" stroke={isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)"} vertical={false} />
+                       <XAxis 
+                         dataKey="month" 
+                         stroke={isDark ? "#475569" : "#94a3b8"} 
+                         fontSize={10} 
+                         fontWeight="bold" 
+                         tickFormatter={(val) => val.substring(0, 3)}
+                       />
+                       <YAxis 
+                         stroke={isDark ? "#475569" : "#94a3b8"} 
+                         fontSize={10} 
+                         fontWeight="bold" 
+                         tickFormatter={(val) => `${val/1000}k`}
+                       />
+                       <Tooltip 
+                          contentStyle={{ 
+                             backgroundColor: isDark ? '#000' : '#fff', 
+                             border: 'none', 
+                             borderRadius: '20px', 
+                             boxShadow: '0 10px 30px rgba(0,0,0,0.2)' 
+                          }}
+                          itemStyle={{ fontSize: '12px', fontWeight: '900' }}
+                       />
+                       <Area 
+                          type="monotone" 
+                          dataKey="cumulativeCash" 
+                          stroke="#fbbf24" 
+                          strokeWidth={4}
+                          fillOpacity={1} 
+                          fill="url(#colorCumul)" 
+                          name={language === 'ar' ? 'تراكمي فعلي' : 'Cumul. Actual'}
+                       />
+                       <Area 
+                          type="monotone" 
+                          dataKey="cumulativePlanned" 
+                          stroke={isDark ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.1)"} 
+                          strokeWidth={2}
+                          strokeDasharray="10 10"
+                          fill="transparent"
+                          name={language === 'ar' ? 'تراكمي مخطط' : 'Cumul. Target'}
+                       />
+                    </AreaChart>
+                 </ResponsiveContainer>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
+                 <div className={cn("p-6 rounded-3xl border flex flex-col justify-between", isDark ? "bg-white/5 border-white/5" : "bg-slate-50 border-slate-100")}>
+                    <div>
+                       <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">{language === 'ar' ? 'معدل الادخار' : 'Savings Rate'}</div>
+                       <div className="text-2xl font-black italic text-emerald-500">
+                          {Math.round(((stats?.currentMonth?.monthlySavings || 0) / ( (stats?.currentMonth?.actualSalary || 1) + (stats?.currentMonth?.actualUber || 0) )) * 100)}%
+                       </div>
+                    </div>
+                    <p className="text-[8px] text-slate-500 font-medium mt-2">{language === 'ar' ? 'نسبة ما تدخره من دخلك الإجمالي' : '% of total income saved'}</p>
+                 </div>
+                 
+                 <div className={cn("p-6 rounded-3xl border flex flex-col justify-between", isDark ? "bg-white/5 border-white/5" : "bg-slate-50 border-slate-100")}>
+                    <div>
+                       <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">{language === 'ar' ? 'النمو بفضل الذهب' : 'Gold Growth Hub'}</div>
+                       <div className="text-2xl font-black italic text-amber-500">
+                          +{(stats?.totalGoldValue || 0).toLocaleString()} <span className="text-xs">EGP</span>
+                       </div>
+                    </div>
+                    <p className="text-[8px] text-slate-500 font-medium mt-2">{language === 'ar' ? 'القيمة الحالية لاستثمارات الذهب' : 'Current net worth of gold'}</p>
+                 </div>
+
+                 <div className={cn("p-6 rounded-3xl border flex flex-col justify-between", isDark ? "bg-white/5 border-white/5" : "bg-slate-50 border-slate-100")}>
+                    <div>
+                       <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">{language === 'ar' ? 'الالتزام المالي' : 'Plan Sync'}</div>
+                       <div className="text-2xl font-black italic">
+                          {Math.round(((stats?.currentMonth?.cumulativeCash || 0) / (stats?.currentMonth?.cumulativePlanned || 1)) * 100)}%
+                       </div>
+                    </div>
+                    <p className="text-[8px] text-slate-500 font-medium mt-2">{language === 'ar' ? 'مدى التطابق مع المخطط' : 'Adherence to planned targets'}</p>
+                 </div>
+
+                 <div className={cn("p-6 rounded-3xl border flex flex-col justify-between", isDark ? "bg-white/5 border-white/5" : "bg-slate-50 border-slate-100")}>
+                    <div>
+                       <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">{language === 'ar' ? 'التوقع السنوي' : 'Annual Outlook'}</div>
+                       <div className="text-2xl font-black italic">
+                          {( (stats?.currentMonth?.cumulativeCash || 0) + (profile?.savingsTarget || 0) * (12 - stats?.computedEntries.length) ).toLocaleString()} <span className="text-xs">EGP</span>
+                       </div>
+                    </div>
+                    <p className="text-[8px] text-slate-500 font-medium mt-2">{language === 'ar' ? 'إجمالي المتوقع بنهاية العام' : 'Projected total by end of year'}</p>
+                 </div>
+              </div>
+           </div>
+        </div>
+      ) : currentProject === 'ai' ? (
+        <div className="max-w-4xl mx-auto px-4 mb-24 animate-in fade-in slide-in-from-bottom-4 duration-500">
+           <div className={cn("rounded-[40px] p-8 border min-h-[600px] flex flex-col relative overflow-hidden", isDark ? "glass border-white/10" : "bg-white border-slate-200 shadow-sm")}>
+              <div className="absolute top-0 right-0 w-96 h-96 bg-brand-yellow/5 rounded-full blur-[120px] pointer-events-none" />
+              
+              <div className="flex items-center gap-4 mb-8">
+                 <div className={cn("w-14 h-14 rounded-2xl flex items-center justify-center shadow-xl", isDark ? "bg-white text-black" : "bg-slate-900 text-white")}>
+                    <Sparkles className="w-8 h-8" />
+                 </div>
+                 <div>
+                    <h2 className={cn("text-3xl font-black italic uppercase tracking-tighter", isDark ? "text-white" : "text-slate-900")}>
+                       {language === 'ar' ? 'المساعد المالي AI' : 'AI Financial Assistant'}
+                    </h2>
+                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{language === 'ar' ? 'نظام ذكاء اصطناعي لتحليل بياناتك المالية' : 'Generative AI system analyzing your financial data'}</p>
+                 </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto space-y-6 pr-2 mb-8 custom-scrollbar">
+                 <div className={cn("p-6 rounded-3xl border-2 transition-all", isDark ? "bg-white/5 border-white/10 text-white" : "bg-slate-50 border-slate-200 text-slate-900")}>
+                    <div className="flex items-center gap-2 mb-4">
+                       <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                       <span className="text-[10px] font-black uppercase tracking-widest">{language === 'ar' ? 'توصية الخبير' : 'Expert Insight'}</span>
+                    </div>
+                    <div className={cn("markdown-body prose prose-sm max-w-none px-2", isDark ? "prose-invert" : "")}>
+                       <Markdown>{aiAdvice}</Markdown>
+                    </div>
+                 </div>
+                 
+                 <div className="flex justify-center flex-col items-center gap-4 py-12 opacity-30">
+                    <MessageCircle className="w-12 h-12" />
+                    <p className="text-xs font-bold uppercase tracking-widest">{language === 'ar' ? 'دردشة حية مدعومة بـ Gemini' : 'Live Chat powered by Gemini'}</p>
+                 </div>
+              </div>
+
+              <div className="relative group">
+                 <button 
+                   onClick={() => setShowAiChat(true)}
+                   className="w-full h-20 bg-brand-yellow text-black rounded-3xl font-black italic text-xl flex items-center justify-center gap-4 shadow-2xl shadow-brand-yellow/20 hover:scale-[1.02] active:scale-95 transition-all"
+                 >
+                    <MessageCircle className="w-6 h-6" />
+                    {language === 'ar' ? 'فتح الدردشة الذكية' : 'Open Smart Chat'}
+                 </button>
+              </div>
+           </div>
+        </div>
+      ) : currentProject === 'daily' ? (
         <div className="max-w-4xl mx-auto space-y-8">
            {/* Daily Balance Card */}
            <motion.div 
@@ -1335,40 +1801,44 @@ export default function App() {
             </div>
          </div>
       ) : currentProject === 'expenses' ? (
-        <div className="max-w-4xl mx-auto space-y-8 px-4 mb-20 scroll-mt-24">
+        <div className="max-w-6xl mx-auto space-y-8 px-4 mb-32 scroll-mt-24">
           <motion.div 
             initial={{ opacity: 0, scale: 0.98 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="glass rounded-[40px] p-8 border border-white/10"
+            className="space-y-8"
           >
-            <div className="flex justify-between items-center mb-8">
-              <div className="space-y-1">
-                <h2 className={cn("text-3xl font-black italic uppercase tracking-tighter", isDark ? "text-white" : "text-slate-900")}>
-                  {language === 'ar' ? 'متتبع المصروفات' : 'Expense Tracker'}
-                </h2>
-                <div className="flex items-center gap-2">
-                  <Calendar className="w-3 h-3 text-slate-500" />
-                  <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">
-                    {selectedEntry?.month} {selectedEntry?.year}
-                  </span>
+            <div className={cn(
+              "rounded-[40px] p-8 border transition-all",
+              isDark ? "glass border-white/10" : "bg-white border-slate-200 shadow-sm"
+            )}>
+              <div className="flex justify-between items-center mb-8">
+                <div className="space-y-1">
+                  <h2 className={cn("text-3xl font-black italic uppercase tracking-tighter", isDark ? "text-white" : "text-slate-900")}>
+                    {language === 'ar' ? 'متتبع المصروفات' : 'Expense Tracker'}
+                  </h2>
+                  <div className="flex items-center gap-2">
+                    <Calendar className="w-3 h-3 text-slate-500" />
+                    <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">
+                      {selectedEntry?.month} {selectedEntry?.year}
+                    </span>
+                  </div>
                 </div>
+                <button 
+                  onClick={() => setIsAddingExpense(true)}
+                  className="w-14 h-14 bg-white text-black rounded-2xl flex items-center justify-center hover:scale-110 active:scale-95 transition-all shadow-xl shadow-white/10"
+                >
+                  <PlusCircle className="w-6 h-6" />
+                </button>
               </div>
-              <button 
-                onClick={() => setIsAddingExpense(true)}
-                className="w-14 h-14 bg-white text-black rounded-2xl flex items-center justify-center hover:scale-110 active:scale-95 transition-all shadow-xl shadow-white/10"
-              >
-                <PlusCircle className="w-6 h-6" />
-              </button>
-            </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-               {/* Right Column (Analysis) moved to top/left visual priority in mobile or side-by-side */}
-               <div className="space-y-6 md:order-2">
-                  {/* Financial Analysis Card */}
-                  <div className={cn(
-                     "rounded-[40px] p-8 border transition-all h-full",
-                     isDark ? "glass border-white/10" : "bg-white border-slate-200 shadow-sm"
-                  )}>
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                 {/* Right Column (Analysis) */}
+                 <div className="space-y-6 lg:order-2">
+                    {/* Financial Analysis Card */}
+                    <div className={cn(
+                       "rounded-[32px] p-6 border transition-all",
+                       isDark ? "bg-white/5 border-white/10 shadow-inner" : "bg-slate-50 border-slate-200 shadow-sm"
+                    )}>
                      <div className="flex items-center gap-3 mb-8">
                         <div className={cn(
                            "w-10 h-10 rounded-xl flex items-center justify-center",
@@ -1458,8 +1928,7 @@ export default function App() {
                            </div>
                         </div>
 
-                        {/* Individual Items Breakdown */}
-                        <div className="flex flex-col h-full">
+                        <div className="flex flex-col">
                            <div className="flex justify-between items-center mb-6">
                               <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
                                 {filterCategory 
@@ -1469,7 +1938,7 @@ export default function App() {
                               </span>
                            </div>
                            
-                           <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+                           <div className="space-y-3 max-h-[350px] overflow-y-auto pr-2 custom-scrollbar">
                               {(selectedEntry?.itemAnalysisData || [])
                                 .filter(item => !filterCategory || item.category === filterCategory)
                                 .map((item, idx) => {
@@ -1551,14 +2020,51 @@ export default function App() {
                                   : "Add your daily expenses here and I will transform them into actionable financial insights."))
                           )}
                         </div>
-                     </motion.div>
-                  </div>
-               </div>
+                      </motion.div>
+                   </div>
+
+                   {/* Smart AI Input */}
+                   <div className="mt-6">
+                      <form 
+                        onSubmit={handleSmartAdd}
+                        className={cn(
+                          "relative group transition-all duration-500",
+                          isDark ? "bg-white/5 border-white/5" : "bg-white border-slate-100",
+                          "rounded-[32px] border p-2"
+                        )}
+                      >
+                         <input 
+                           type="text"
+                           value={smartInput}
+                           onChange={(e) => setSmartInput(e.target.value)}
+                           placeholder={language === 'ar' ? 'أضف مصروف بالذكاء الاصطناعي (مثال: ٥٠ جنيه فطار)' : 'Add with AI (e.g. 50 egp breakfast)'}
+                           className={cn(
+                             "w-full bg-transparent p-4 pr-14 text-sm font-bold outline-none",
+                             isDark ? "text-white placeholder:text-slate-600" : "text-slate-900 placeholder:text-slate-400"
+                           )}
+                           disabled={isSmartLoading}
+                         />
+                         <button 
+                           type="submit"
+                           disabled={isSmartLoading || !smartInput.trim()}
+                           className={cn(
+                             "absolute right-3 top-3 w-10 h-10 rounded-2xl flex items-center justify-center transition-all",
+                             isSmartLoading ? "bg-slate-800" : (smartInput.trim() ? "bg-brand-yellow text-black shadow-lg shadow-brand-yellow/20" : "bg-white/5 text-slate-500")
+                           )}
+                         >
+                            {isSmartLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                         </button>
+                      </form>
+                   </div>
+                </div>
 
                {/* Left Column (Transactions) */}
-               <div className="md:col-span-2 space-y-6 md:order-1">
+                <div className="lg:col-span-2 space-y-6 lg:order-1">
                   {/* Summary Bar */}
-                  <div className="p-6 bg-white/5 rounded-3xl border border-white/10 flex items-center justify-between">
+                  <div className={cn(
+                    "p-6 rounded-3xl border flex items-center justify-between",
+                    isDark ? "bg-white/5 border-white/10" : "bg-slate-50 border-slate-200"
+                  )}>
                      <div className="space-y-1">
                         <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{language === 'ar' ? 'إجمالي المصاريف' : 'Total Spent'}</div>
                         <div className={cn("text-4xl font-black text-white italic transition-all duration-500", !showValues && "blur-xl opacity-30")}>
@@ -1584,37 +2090,37 @@ export default function App() {
                           <div 
                             key={expense.id} 
                             className={cn(
-                              "flex sm:items-center justify-between p-4 sm:p-5 border rounded-2xl group transition-all gap-2 flex-col sm:flex-row",
+                              "flex sm:items-center justify-between p-3.5 sm:p-5 border rounded-2xl group transition-all gap-3 flex-col sm:flex-row",
                               isDark ? "bg-white/2 border-white/5 hover:border-white/10 hover:bg-white/5 shadow-inner" : "bg-white border-slate-100 hover:border-slate-200 shadow-sm"
                             )}
                           >
-                             <div className="flex items-center gap-4 flex-1 min-w-0">
+                             <div className="flex items-center gap-3 sm:gap-4 flex-1 min-w-0">
                                 <div className={cn(
-                                  "w-10 h-10 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center transition-colors shadow-sm shrink-0",
+                                  "w-9 h-9 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl flex items-center justify-center transition-colors shadow-sm shrink-0",
                                   isDark ? "bg-white/10 text-white" : "bg-slate-100 text-slate-500"
                                 )}>
                                    {(() => {
                                       const autoCatId = getAutoCategory(expense.description, (expense as any).category);
                                       const cat = EXPENSE_CATEGORIES.find(c => c.id === autoCatId);
                                       const Icon = (cat as any)?.icon || LayoutGrid;
-                                      return <Icon className="w-5 h-5" style={{ color: cat?.color || '#94a3b8' }} />;
+                                      return <Icon className="w-4 h-4 sm:w-5 sm:h-5" style={{ color: cat?.color || '#94a3b8' }} />;
                                    })()}
                                 </div>
-                                <div className="flex-1 min-w-0">
-                                   <div className={cn("text-xs font-black truncate", isDark ? "text-white" : "text-slate-900")}>{expense.description}</div>
-                                   <div className="flex items-center gap-2 flex-wrap">
-                                      <div className="text-[9px] text-slate-500 font-bold uppercase tracking-widest whitespace-nowrap">
+                                <div className="flex-1 min-w-0 flex flex-col justify-center">
+                                   <div className={cn("text-[10px] sm:text-xs font-black truncate max-w-full", isDark ? "text-white" : "text-slate-900")}>{expense.description}</div>
+                                   <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                                      <div className="text-[8px] sm:text-[9px] text-slate-500 font-bold uppercase tracking-widest whitespace-nowrap">
                                          {(() => {
                                              const autoCatId = getAutoCategory(expense.description, (expense as any).category);
-                                             const cat = EXPENSE_CATEGORIES.find(c => c.id === autoCatId);
-                                             if (!cat) return autoCatId;
-                                             return language === 'ar' ? cat?.label : cat?.labelEn;
-                                          })()}
+                                              const cat = EXPENSE_CATEGORIES.find(c => c.id === autoCatId);
+                                              if (!cat) return autoCatId;
+                                              return language === 'ar' ? cat?.label : cat?.labelEn;
+                                           })()}
                                       </div>
                                       {(expense as any).installmentInfo && (
                                         <>
-                                          <div className="w-1 h-1 rounded-full bg-slate-700" />
-                                          <div className="text-[8px] font-black bg-brand-yellow/10 text-brand-yellow px-1.5 py-0.5 rounded-md border border-brand-yellow/20">
+                                          <div className="w-0.5 h-0.5 rounded-full bg-slate-700 opacity-30" />
+                                          <div className="text-[7px] sm:text-[8px] font-black bg-brand-yellow/10 text-brand-yellow px-1 py-0.5 rounded-md border border-brand-yellow/20">
                                             {language === 'ar' ? 'قسط' : 'Inst.'} {(expense as any).installmentInfo.current}/{(expense as any).installmentInfo.total}
                                           </div>
                                         </>
@@ -1622,18 +2128,18 @@ export default function App() {
                                    </div>
                                 </div>
                              </div>
-                             <div className="flex items-center gap-3 sm:gap-4 justify-between sm:justify-end">
+                             <div className="flex items-center gap-3 sm:gap-4 justify-between sm:justify-end mt-1 sm:mt-0 pt-2 sm:pt-0 border-t sm:border-0 border-white/5">
                                 <div className={cn(
                                   "text-sm sm:text-base font-black transition-all duration-500",
                                   isDark ? "text-white" : "text-slate-900",
                                   !showValues && "blur-md opacity-30"
                                 )}>
-                                  {(expense.amount || 0).toLocaleString()}
+                                  {(expense.amount || 0).toLocaleString()} <span className="text-[10px] opacity-40">EGP</span>
                                 </div>
                                 <button 
                                   onClick={() => handleDeleteExpense(expense.id, (expense as any).recurringId)}
                                   className={cn(
-                                    "p-2 opacity-0 group-hover:opacity-100 transition-all",
+                                    "p-2 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all",
                                     isDark ? "text-slate-600 hover:text-brand-red" : "text-slate-400 hover:text-red-500"
                                   )}
                                 >
@@ -1652,14 +2158,15 @@ export default function App() {
                         </div>
                       )}
                     </div>
-                  </div>
+                 </div>
                </div>
+            </div>
 
-               {/* Monthly Planning Table */}
-               <div className={cn(
-                 "rounded-[40px] p-8 border overflow-hidden mt-8 transition-all duration-500",
-                 isDark ? "glass border-white/10" : "bg-white border-slate-200 shadow-sm"
-               )}>
+            {/* Monthly Planning Table Section */}
+            <div className={cn(
+              "rounded-[40px] p-8 border overflow-hidden transition-all duration-500",
+              isDark ? "glass border-white/10" : "bg-white border-slate-200 shadow-sm"
+            )}>
                  <h3 className={cn(
                    "text-xl font-black italic uppercase tracking-tighter mb-6",
                    isDark ? "text-white" : "text-slate-900"
@@ -1745,8 +2252,10 @@ export default function App() {
               <StatCard 
                  icon={<Goal className="w-5 h-5 text-brand-blue" />}
                  label={language === 'ar' ? 'المستهدف الشهري' : 'Month Target'}
-                 value={`${(profile?.savingsTarget || 0).toLocaleString()} EGP`}
-                 subValue={language === 'ar' ? 'من بيانات إكسل المخططة' : 'From Excel planned data'}
+                 value={`${(stats?.currentMonth?.monthlySavings || 0).toLocaleString()} / ${(profile?.savingsTarget || 0).toLocaleString()}`}
+                 subValue={language === 'ar' 
+                   ? `حققت ${(((stats?.currentMonth?.monthlySavings || 0) / (profile?.savingsTarget || 1)) * 100).toFixed(1)}% من هدف الشهر`
+                   : `Achieved ${(((stats?.currentMonth?.monthlySavings || 0) / (profile?.savingsTarget || 1)) * 100).toFixed(1)}% of monthly target`}
                  editable
                  isBlurred={!showValues}
                  isDark={isDark}
@@ -2105,20 +2614,22 @@ export default function App() {
                      
                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                         {[
-                           { id: 'dark', name: 'Cyber Dark', nameAr: 'ليلي سايبر', bg: '#0c0c0e', primary: '#fbbf24' },
+                           { id: 'royal', name: 'Royal Gold', nameAr: 'الملكي الذهبي', bg: '#000000', primary: '#d4af37' },
                            { id: 'light', name: 'Pure Light', nameAr: 'فجر ناصع', bg: '#ffffff', primary: '#0f172a' },
-                           { id: 'midnight', name: 'Midnight', nameAr: 'منتصف الليل', bg: '#020617', primary: '#6366f1' },
-                           { id: 'forest', name: 'Forest', nameAr: 'الغابة', bg: '#061a14', primary: '#10b981' },
-                           { id: 'sunset', name: 'Sunset', nameAr: 'الغروب', bg: '#1a0d14', primary: '#f43f5e' },
-                           { id: 'ocean', name: 'Ocean', nameAr: 'المحيط', bg: '#031721', primary: '#0ea5e9' },
-                           { id: 'luxury', name: 'Luxury', nameAr: 'فاخر', bg: '#000000', primary: '#d4af37' },
-                           { id: 'minimal', name: 'Minimal', nameAr: 'بسيط', bg: '#f8fafc', primary: '#1e293b' },
+                           { id: 'midnight', name: 'Midnight', nameAr: 'منتصف الليل', bg: '#020617', primary: '#3b82f6' },
+                           { id: 'nebula', name: 'Nebula', nameAr: 'سديم الأرجوان', bg: '#0f0114', primary: '#d946ef' },
+                           { id: 'mint', name: 'Mint Leaf', nameAr: 'نعناع منعش', bg: '#050f0d', primary: '#10b981' },
+                           { id: 'lava', name: 'Lava Flow', nameAr: 'صهارة بركانية', bg: '#0c0c0c', primary: '#f97316' },
+                           { id: 'aurora', name: 'Aurora', nameAr: 'شفق قطبي', bg: '#05191c', primary: '#2dd4bf' },
+                           { id: 'coffee', name: 'Coffee', nameAr: 'قهوة اسبريسو', bg: '#fdfaf6', primary: '#b45309' },
+                           { id: 'slate', name: 'Slate', nameAr: 'حجر رمادي', bg: '#f8fafc', primary: '#64748b' },
                         ].map((t) => (
                            <button
                               key={t.id}
                               onClick={() => {
                                  setTheme(t.id as any);
-                                 vibrate(5);
+                                 localStorage.setItem('app-theme', t.id);
+                                 vibrate(10);
                               }}
                               className={cn(
                                  "relative p-4 rounded-3xl border transition-all h-32 flex flex-col justify-between overflow-hidden group",
@@ -2134,7 +2645,7 @@ export default function App() {
                               <div className="relative z-10 flex flex-col h-full justify-between font-sans">
                                  <div className="flex justify-between items-start">
                                     <div className="w-8 h-8 rounded-xl flex items-center justify-center shadow-lg" style={{ backgroundColor: t.primary }}>
-                                       <Palette className={cn("w-4 h-4", (t.id === 'light' || t.id === 'minimal') ? "text-slate-900" : "text-white")} />
+                                       <Palette className={cn("w-4 h-4", (t.id === 'light' || t.id === 'nordic' || t.id === 'sepia') ? "text-slate-900" : "text-white")} />
                                     </div>
                                     {theme === t.id && (
                                        <div className="w-5 h-5 bg-brand-yellow rounded-full flex items-center justify-center animate-in zoom-in duration-300 shadow-xl border border-black/10">
@@ -2178,7 +2689,6 @@ export default function App() {
         <div className="hidden" />
       )}
 
-      {/* Floating Action Buttons */}
       <div className="fixed bottom-6 left-6 flex flex-col gap-3 z-40">
         <button 
           onClick={exportData}
@@ -2219,6 +2729,88 @@ export default function App() {
 
       {/* Update Modals */}
       <AnimatePresence>
+        {isAddingGoldLog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setIsAddingGoldLog(false)}
+            className="absolute inset-0 bg-black/60 backdrop-blur-md"
+          />
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.9, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.9, y: 20 }}
+            className={cn(
+              "w-full max-w-lg rounded-[40px] border relative z-10 overflow-hidden",
+              isDark ? "glass border-white/10" : "bg-white border-slate-200 shadow-2xl"
+            )}
+          >
+             <div className="p-8">
+                <div className="flex items-center gap-4 mb-8">
+                   <div className="w-12 h-12 rounded-2xl bg-amber-400/10 flex items-center justify-center">
+                      <Coins className="w-6 h-6 text-amber-400" />
+                   </div>
+                   <div>
+                      <h3 className={cn("text-2xl font-black italic uppercase tracking-tighter", isDark ? "text-white" : "text-slate-900")}>
+                        {language === 'ar' ? 'إضافة ذهب' : 'Add Gold Log'}
+                      </h3>
+                      <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{language === 'ar' ? 'سجل عملية شراء جديدة' : 'Record a new purchase'}</p>
+                   </div>
+                </div>
+
+                <div className="space-y-6">
+                   <div className="space-y-2">
+                      <label className="text-[10px] text-slate-500 font-bold uppercase tracking-widest px-2">{language === 'ar' ? 'الوزن (جرام)' : 'Weight (Grams)'}</label>
+                      <input 
+                        type="number"
+                        placeholder="0.00"
+                        value={newGoldLog.weight}
+                        onChange={(e) => setNewGoldLog({ ...newGoldLog, weight: e.target.value })}
+                        className={cn("w-full bg-black/40 border border-white/10 rounded-2xl p-5 text-lg font-black italic focus:border-brand-yellow outline-none transition-all", isDark ? "text-white" : "bg-slate-50 border-slate-200 text-slate-900")}
+                      />
+                   </div>
+                   <div className="space-y-2">
+                      <label className="text-[10px] text-slate-500 font-bold uppercase tracking-widest px-2">{language === 'ar' ? 'سعر الجرام (اختياري)' : 'Price per Gram (Optional)'}</label>
+                      <input 
+                        type="number"
+                        placeholder={currentGoldPrice.toString()}
+                        value={newGoldLog.price}
+                        onChange={(e) => setNewGoldLog({ ...newGoldLog, price: e.target.value })}
+                        className={cn("w-full bg-black/40 border border-white/10 rounded-2xl p-5 text-lg font-black italic focus:border-brand-yellow outline-none transition-all", isDark ? "text-white" : "bg-slate-50 border-slate-200 text-slate-900")}
+                      />
+                   </div>
+                   <div className="space-y-2">
+                      <label className="text-[10px] text-slate-500 font-bold uppercase tracking-widest px-2">{language === 'ar' ? 'ملاحظات' : 'Notes'}</label>
+                      <input 
+                        type="text"
+                        placeholder="..."
+                        value={newGoldLog.notes}
+                        onChange={(e) => setNewGoldLog({ ...newGoldLog, notes: e.target.value })}
+                        className={cn("w-full bg-black/40 border border-white/10 rounded-2xl p-5 text-sm font-bold focus:border-brand-yellow outline-none transition-all", isDark ? "text-white" : "bg-slate-50 border-slate-200 text-slate-900")}
+                      />
+                   </div>
+                   
+                   <div className="flex gap-4 pt-4">
+                      <button 
+                        onClick={handleAddGoldLog}
+                        className="flex-1 bg-brand-yellow text-black py-5 rounded-3xl font-black italic text-lg hover:scale-[1.02] active:scale-95 transition-all shadow-xl shadow-brand-yellow/20"
+                      >
+                         {language === 'ar' ? 'تأكيد الإضافة' : 'Confirm Addition'}
+                      </button>
+                      <button 
+                        onClick={() => setIsAddingGoldLog(false)}
+                        className="px-8 rounded-3xl bg-white/5 text-slate-500 font-black italic uppercase text-sm hover:bg-white/10 transition-all"
+                      >
+                         {language === 'ar' ? 'إلغاء' : 'Cancel'}
+                      </button>
+                   </div>
+                </div>
+             </div>
+          </motion.div>
+        </div>
+        )}
         {editingField && (
           <div className="fixed inset-0 z-50 overflow-y-auto">
              <motion.div 
@@ -2670,77 +3262,30 @@ export default function App() {
           )}
         </button>
       </div>
-      {/* Instagram Style Bottom Navigation */}
-      <nav className={cn(
-        "fixed bottom-0 left-0 right-0 z-50 border-t py-4 px-10 flex items-center justify-around pb-[calc(1rem+env(safe-area-inset-bottom))] transition-all duration-500",
-        isDark ? "bg-black border-brand-border" : "bg-white border-slate-200 shadow-[0_-1px_10px_rgba(0,0,0,0.05)]",
-        isKeyboardVisible && "translate-y-full opacity-0 pointer-events-none"
-      )}>
-         <button 
-           onClick={() => {
-             setCurrentProject('savings');
-             vibrate();
-           }}
-           className={cn(
-             "flex flex-col items-center gap-1 transition-all text-center min-w-[50px]",
-             currentProject === 'savings' 
-               ? (isDark ? "text-white scale-110" : "text-brand-bg scale-110") 
-               : (isDark ? "text-slate-500 hover:text-white" : "text-slate-400 hover:text-brand-bg")
-           )}
-         >
-           <Wallet className={cn("w-6 h-6 transition-all", currentProject === 'savings' && (isDark ? "text-white" : "text-brand-bg"))} fill={currentProject === 'savings' ? "currentColor" : "none"} />
-           <span className="text-[8px] font-bold uppercase tracking-wider">{language === 'ar' ? 'الادخار' : 'Savings'}</span>
-         </button>
-
-         <button 
-           onClick={() => {
-             setCurrentProject('expenses');
-             vibrate();
-           }}
-           className={cn(
-             "flex flex-col items-center gap-1 transition-all text-center min-w-[50px]",
-             currentProject === 'expenses' 
-               ? (isDark ? "text-white scale-110" : "text-brand-bg scale-110") 
-               : (isDark ? "text-slate-500 hover:text-white" : "text-slate-400 hover:text-brand-bg")
-           )}
-         >
-           <MinusCircle className={cn("w-6 h-6 transition-all", currentProject === 'expenses' && (isDark ? "text-white" : "text-brand-bg"))} fill={currentProject === 'expenses' ? "currentColor" : "none"} />
-           <span className="text-[8px] font-bold uppercase tracking-wider">{language === 'ar' ? 'المصروفات' : 'Expenses'}</span>
-         </button>
-
-         <button 
-           onClick={() => {
-             setCurrentProject('daily');
-             vibrate();
-           }}
-           className={cn(
-             "flex flex-col items-center gap-1 transition-all text-center min-w-[50px]",
-             currentProject === 'daily' 
-               ? (isDark ? "text-white scale-110" : "text-brand-bg scale-110") 
-               : (isDark ? "text-slate-500 hover:text-white" : "text-slate-400 hover:text-brand-bg")
-           )}
-         >
-           <Calendar className={cn("w-6 h-6 transition-all", currentProject === 'daily' && (isDark ? "text-white" : "text-brand-bg"))} fill={currentProject === 'daily' ? "currentColor" : "none"} />
-           <span className="text-[8px] font-bold uppercase tracking-wider">{language === 'ar' ? 'يومي' : 'Daily'}</span>
-         </button>
-
-         <button 
-           onClick={() => {
-             setCurrentProject('settings');
-             vibrate();
-           }}
-           className={cn(
-             "flex flex-col items-center gap-1 transition-all text-center min-w-[50px]",
-             currentProject === 'settings' 
-               ? (isDark ? "text-white scale-110" : "text-brand-bg scale-110") 
-               : (isDark ? "text-slate-500 hover:text-white" : "text-slate-400 hover:text-brand-bg")
-           )}
-         >
-           <Settings className={cn("w-6 h-6 transition-all", currentProject === 'settings' && (isDark ? "text-white" : "text-brand-bg"))} fill={currentProject === 'settings' ? "currentColor" : "none"} />
-           <span className="text-[8px] font-bold uppercase tracking-wider">{language === 'ar' ? 'الضبط' : 'Settings'}</span>
-         </button>
-      </nav>
     </div>
+  );
+}
+
+function NavButton({ active, onClick, icon, label, isDark }: { 
+  active: boolean, 
+  onClick: () => void, 
+  icon: React.ReactNode, 
+  label: string,
+  isDark: boolean
+}) {
+  return (
+    <button 
+      onClick={onClick}
+      className={cn(
+        "w-full flex items-center gap-4 px-4 py-4 rounded-3xl transition-all duration-300",
+        active 
+          ? (isDark ? "bg-brand-yellow text-black shadow-lg shadow-brand-yellow/20" : "bg-brand-bg text-white shadow-lg shadow-brand-bg/20") 
+          : (isDark ? "text-slate-400 hover:bg-white/5 hover:text-white" : "text-slate-500 hover:bg-slate-100 hover:text-slate-900")
+      )}
+    >
+      {icon}
+      <span className="font-black italic text-sm tracking-tight uppercase">{label}</span>
+    </button>
   );
 }
 

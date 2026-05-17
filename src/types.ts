@@ -3,6 +3,8 @@ export interface ExpenseItem {
   description: string;
   amount: number;
   category: string;
+  date?: string;
+  isInstallment?: boolean;
 }
 
 export interface GoldTransaction {
@@ -10,6 +12,7 @@ export interface GoldTransaction {
   date: string;
   weight: number;
   pricePerUnit: number;
+  price?: number;
   notes?: string;
 }
 

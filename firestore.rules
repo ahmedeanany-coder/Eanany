@@ -52,6 +52,11 @@ service cloud.firestore {
                  isValidId(entryId);
         }
       }
+
+      // Gold Logs subcollection
+      match /goldLogs/{logId} {
+        allow read, write: if isOwner(userId);
+      }
     }
 
     // Gym Rules
