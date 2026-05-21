@@ -57,8 +57,8 @@ async function callAIWithCache(key: string, ttl: number, action: () => Promise<a
 
 async function callAIWithRetry(params: any, retries = 3) {
   const modelsToTry = [
+    "gemini-3.5-flash",
     "gemini-flash-latest",
-    "gemini-3-flash-preview",
     "gemini-3.1-flash-lite",
   ];
 
@@ -169,7 +169,7 @@ export async function getFinancialAdvice(data: any, language: 'ar' | 'en') {
         }),
       });
       
-      if (response.status === 429) {
+      if (response.status === 429 || response.status === 503 || !response.ok) {
         return getLocalAdvice(data, language);
       }
       
@@ -208,19 +208,30 @@ export async function askFinancialAI(question: string, context: any, language: '
   }
 }
 
-export async function getGoldPrice() {
-  const cacheKey = 'gold_price_egp_v2';
+export async function getGoldPrice(force: boolean = false) {
+  const cacheKey = 'gold_price_egp_v5';
+  
+  if (force) {
+    // Clear cache if forced
+    delete globalCache[cacheKey];
+    localStorage.removeItem(`ai_cache_${cacheKey}`);
+    localStorage.removeItem(`ai_cache_${cacheKey}_time`);
+  }
+
   return callAIWithCache(cacheKey, 1000 * 60 * 30, async () => {
     try {
-      const response = await fetch('/api/gold-price');
-      if (response.status === 429) return 4100;
+      const response = await fetch(`/api/gold-price${force ? '?refresh=true' : ''}`);
+      if (response.status === 429) return 7900;
       const result = await response.json();
-      return result.price || 4100;
+      return result.prices?.['24k'] || result.price || 7900;
     } catch (error: any) {
       if (!error?.message?.includes('429')) {
-        console.error("Gold Price Proxy Error:", error);
+        console.error("Gold price fetch failed", error);
       }
-      return 4100;
+      return 7900;
     }
   });
 }
+
+
+

@@ -27,6 +27,7 @@ import {
   Calendar, 
   Coins, 
   LogOut, 
+  FileSpreadsheet,
   LogIn, 
   CheckCircle2, 
   Clock, 
@@ -113,6 +114,7 @@ import { MonthlyEntry, UserProfile, ExpenseItem, GoldTransaction } from './types
 import { cn } from './lib/utils';
 import { getFinancialAdvice, askFinancialAI, getGoldPrice } from './services/aiService';
 import { exportPlanToExcel } from './lib/exportUtils';
+import FileConverter from './components/FileConverter';
 
 const AUTHORIZED_EMAIL = 'ahmedeanany@gmail.com';
 
@@ -176,7 +178,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [isBiometricVerified, setIsBiometricVerified] = useState(true);
   const [password, setPassword] = useState('');
-  const [currentProject, setCurrentProject] = useState<'savings' | 'daily' | 'expenses' | 'settings' | 'gold' | 'stats' | 'ai'>('savings');
+  const [currentProject, setCurrentProject] = useState<'savings' | 'daily' | 'expenses' | 'settings' | 'gold' | 'stats' | 'ai' | 'converter'>('savings');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [filterCategory, setFilterCategory] = useState<string | null>(null);
   const [theme, setTheme] = useState<'royal' | 'light' | 'midnight' | 'nebula' | 'mint' | 'lava' | 'aurora' | 'coffee' | 'slate'>(() => {
@@ -199,7 +201,12 @@ export default function App() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [entries, setEntries] = useState<MonthlyEntry[]>([]);
   const [goldLogs, setGoldLogs] = useState<GoldTransaction[]>([]);
-  const [currentGoldPrice, setCurrentGoldPrice] = useState(8000);
+  const [currentGoldPrice, setCurrentGoldPrice] = useState(7900);
+  const [isRefreshingGold, setIsRefreshingGold] = useState(false);
+  const [isEditingTargets, setIsEditingTargets] = useState(false);
+  const [editTargetCash, setEditTargetCash] = useState<string>('');
+  const [editTargetGold, setEditTargetGold] = useState<string>('');
+
   
   // Update Theme Body Class
   useEffect(() => {
@@ -241,6 +248,8 @@ export default function App() {
         root.classList.add('light');
         root.classList.remove('dark');
       }
+      
+      localStorage.setItem('app-theme', theme);
     }
   }, [theme]);
 
@@ -571,6 +580,8 @@ export default function App() {
     };
     fetchGoldPrice();
 
+
+
     return unsubAuth;
   }, [user]);
 
@@ -586,8 +597,8 @@ export default function App() {
     const entriesRef = collection(db, 'profiles', user.uid, 'entries');
     
     const unsubProfile = onSnapshot(profileRef, async (snap) => {
-      if (!snap.exists() || !snap.data().startDate) {
-        // Force Re-seed if no profile or legacy profile found
+      if (!snap.exists()) {
+        // Safe Seed only for brand new user
         try {
           const batch = writeBatch(db);
           batch.set(profileRef, DEFAULT_PROFILE);
@@ -619,12 +630,24 @@ export default function App() {
           });
           
           await batch.commit();
-          console.log("Re-seeded successfully due to missing profile or legacy format.");
+          console.log("Seeded successfully for a new user.");
         } catch (err) {
           handleFirestoreError(err, OperationType.WRITE, 'profiles/seed');
         }
       } else {
         const data = snap.data() as UserProfile;
+        // Patch missing fields for existing profile legacy compatibility without wiping entries
+        if (!data.startDate) {
+          try {
+            await updateDoc(profileRef, {
+              startDate: '2026-04-01',
+              endDate: '2028-06-30'
+            });
+            console.log("Safely patched missing startDate for existing profile.");
+          } catch (err) {
+            console.error("Error patching startDate:", err);
+          }
+        }
         setProfile(data);
         setCurrentGoldPrice(data.goldPrice);
       }
@@ -804,6 +827,13 @@ export default function App() {
 
     const totalGoldLogged = goldLogs.reduce((acc, curr) => acc + (Number(curr.weight) || 0), 0);
 
+    const goldDistributionData = goldLogs.map(log => ({
+       name: log.notes || (language === 'ar' ? 'شراء' : 'Purchase'),
+       value: Number(log.weight),
+       fullValue: Number(log.weight) * currentGoldPrice,
+       date: log.date
+    })).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
     return {
       computedEntries,
       currentSavings: currentEntry?.cumulativeCash || 0,
@@ -813,7 +843,8 @@ export default function App() {
       totalMonths,
       progressPercentage: Math.min(((currentEntry?.cumulativeCash || 0) / (profile?.targetCash || 1)) * 100, 100),
       totalGoldLogged,
-      totalGoldValue: totalGoldLogged * currentGoldPrice
+      totalGoldValue: totalGoldLogged * currentGoldPrice,
+      goldDistributionData
     };
   }, [entries, profile, currentGoldPrice, language, goldLogs]);
 
@@ -937,7 +968,7 @@ export default function App() {
         const updatedExpenses = [...(selectedEntry.expenses || []), { ...expense, id: Date.now().toString() } as ExpenseItem];
         const expensesTotal = updatedExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
         
-        await updateDoc(doc(db, 'entries', selectedEntry.id), {
+        await updateDoc(doc(db, 'profiles', user.uid, 'entries', selectedEntry.id), {
           expenses: updatedExpenses,
           expensesTotal
         });
@@ -1198,7 +1229,7 @@ export default function App() {
                       onClick={() => setShowValues(!showValues)}
                       className={cn(
                         "p-3 rounded-2xl transition-all",
-                        isDark ? "hover:bg-white/10 text-slate-400 hover:text-white" : "hover:bg-white text-slate-500 shadow-sm"
+                        isDark ? "hover:bg-white/10 text-slate-400 hover:text-white" : "hover:bg-white text-slate-600 hover:text-slate-950 shadow-sm"
                       )}
                       title={language === 'ar' ? 'إظهار/إخفاء' : 'Show/Hide'}
                     >
@@ -1208,7 +1239,7 @@ export default function App() {
                       onClick={() => profile && exportPlanToExcel(profile, entries)}
                       className={cn(
                         "p-3 rounded-2xl transition-all",
-                        isDark ? "hover:bg-white/10 text-slate-400 hover:text-white" : "hover:bg-white text-slate-500 shadow-sm"
+                        isDark ? "hover:bg-white/10 text-slate-400 hover:text-white" : "hover:bg-white text-slate-600 hover:text-slate-950 shadow-sm"
                       )}
                       title={language === 'ar' ? 'تصدير إكسل' : 'Export Excel'}
                     >
@@ -1218,7 +1249,7 @@ export default function App() {
                       onClick={() => setLanguage(language === 'ar' ? 'en' : 'ar')}
                       className={cn(
                         "px-4 py-3 rounded-2xl transition-all font-black text-xs italic",
-                        isDark ? "hover:bg-white/10 text-slate-400 hover:text-white" : "hover:bg-white text-slate-500 shadow-sm"
+                        isDark ? "hover:bg-white/10 text-slate-400 hover:text-white" : "hover:bg-white text-slate-600 hover:text-slate-950 shadow-sm"
                       )}
                     >
                        {language === 'ar' ? 'EN' : 'AR'}
@@ -1231,7 +1262,7 @@ export default function App() {
                       }}
                       className={cn(
                         "p-3 rounded-2xl transition-all",
-                        isDark ? "hover:bg-white/10 text-slate-400 hover:text-white" : "hover:bg-white text-slate-500 shadow-sm"
+                        isDark ? "hover:bg-white/10 text-slate-400 hover:text-white" : "hover:bg-white text-slate-600 hover:text-slate-950 shadow-sm"
                       )}
                     >
                        {isDark ? <Zap className="w-5 h-5 text-brand-yellow" /> : <Palette className="w-5 h-5" />}
@@ -1319,20 +1350,81 @@ export default function App() {
                  </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-12">
                  <div className={cn("p-8 rounded-3xl border flex flex-col justify-between", isDark ? "bg-white/5 border-white/5" : "bg-slate-50 border-slate-100")}>
                     <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{language === 'ar' ? 'إجمالي الوزن' : 'Total Weight'}</span>
-                    <div className="mt-2 text-5xl font-black italic text-brand-yellow">
-                       {(stats?.totalGoldLogged || 0).toFixed(1)} <span className="text-sm font-bold uppercase">Unit</span>
+                    <div className="mt-2 text-4xl font-black italic text-brand-yellow">
+                       {(stats?.totalGoldLogged || 0).toFixed(1)} <span className="text-xs font-bold uppercase opacity-50">Unit</span>
                     </div>
                  </div>
                  <div className={cn("p-8 rounded-3xl border flex flex-col justify-between", isDark ? "bg-white/5 border-white/5" : "bg-slate-50 border-slate-100")}>
                     <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{language === 'ar' ? 'القيمة الإجمالية' : 'Total Value'}</span>
-                    <div className={cn("mt-2 text-5xl font-black italic transition-all duration-500", isDark ? "text-white" : "text-slate-900", !showValues && "blur-xl")}>
-                       {(stats?.currentMonth?.goldValue || 0).toLocaleString()} <span className="text-sm font-bold uppercase">EGP</span>
+                    <div className={cn("mt-2 text-4xl font-black italic transition-all duration-500", isDark ? "text-white" : "text-slate-900", !showValues && "blur-xl")}>
+                       {(stats?.currentMonth?.goldValue || 0).toLocaleString()} <span className="text-xs font-bold uppercase opacity-50">EGP</span>
                     </div>
                  </div>
+                 <div className={cn("p-8 rounded-3xl border flex flex-col justify-between", isDark ? "bg-white/5 border-white/5" : "bg-slate-50 border-slate-100")}>
+                    <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{language === 'ar' ? 'سعر الذهب (عيار 24)' : 'Gold Price (24k)'}</span>
+                    <div className="mt-2 text-4xl font-black italic text-brand-yellow">
+                       {currentGoldPrice.toLocaleString()} <span className="text-xs font-bold uppercase opacity-50">EGP/g</span>
+                    </div>
+                     <button 
+                        disabled={isRefreshingGold}
+                        onClick={async () => {
+                           vibrate(10);
+                           setIsRefreshingGold(true);
+                           try {
+                              const price = await getGoldPrice(true);
+                              if (price > 2000) {
+                                 setCurrentGoldPrice(price);
+                                 if (user) await updateDoc(doc(db, 'profiles', user.uid), { goldPrice: price });
+                              }
+                           } catch (e) {
+                              console.error("Manual refresh failed", e);
+                           } finally {
+                              setTimeout(() => setIsRefreshingGold(false), 800);
+                           }
+                        }}
+                        className={cn(
+                           "mt-4 w-full flex items-center justify-center gap-2 py-2 rounded-xl bg-amber-400/10 border border-amber-400/20 text-[10px] font-black uppercase text-amber-400 hover:bg-amber-400/20 transition-all",
+                           isRefreshingGold && "opacity-50 cursor-not-allowed"
+                        )}
+                     >
+                        <RefreshCw className={cn("w-3 h-3", isRefreshingGold && "animate-spin")} />
+                        {isRefreshingGold 
+                           ? (language === 'ar' ? 'جاري التحديث...' : 'Refreshing...') 
+                           : (language === 'ar' ? 'تحديث السعر المباشر' : 'Refresh Live Price')}
+                     </button>
+                 </div>
               </div>
+
+              {goldLogs.length > 0 && (
+                 <div className="mb-12 h-[200px] w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                       <BarChart data={stats?.goldDistributionData}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)"} />
+                          <XAxis 
+                             dataKey="date" 
+                             tickFormatter={(str) => new Date(str).toLocaleDateString(language === 'ar' ? 'ar-EG' : 'en-US', { month: 'short', day: 'numeric' })}
+                             stroke={isDark ? "#475569" : "#64748b"}
+                             fontSize={10}
+                             fontWeight="bold"
+                          />
+                          <Tooltip 
+                             contentStyle={{ 
+                                backgroundColor: isDark ? '#000' : '#fff', 
+                                border: 'none', 
+                                borderRadius: '16px',
+                                boxShadow: '0 10px 25px rgba(0,0,0,0.2)'
+                             }}
+                             itemStyle={{ color: '#fbbf24', fontWeight: 'bold' }}
+                             formatter={(value: any) => [`${value} Unit`, language === 'ar' ? 'الوزن' : 'Weight']}
+                          />
+                          <Bar dataKey="value" fill="#fbbf24" radius={[6, 6, 0, 0]} />
+                       </BarChart>
+                    </ResponsiveContainer>
+                 </div>
+              )}
 
               <div className="space-y-4">
                  <div className="flex items-center justify-between px-2">
@@ -1353,14 +1445,30 @@ export default function App() {
                                    <Coins className="w-5 h-5 text-amber-400" />
                                 </div>
                                 <div>
-                                   <div className={cn("text-sm font-black italic", isDark ? "text-white" : "text-slate-900")}>{log.weight} Unit</div>
-                                   <div className="text-[10px] text-slate-500 font-bold uppercase">{log.notes || (language === 'ar' ? 'عملية شراء' : 'Purchase')}</div>
+                                   <div className={cn("text-sm font-black italic", isDark ? "text-white" : "text-slate-900")}>{log.weight} {language === 'ar' ? 'جرام' : 'g'}</div>
+                                   <div className="flex items-center gap-2">
+                                      <div className="text-[10px] text-slate-500 font-bold uppercase">{log.notes || (language === 'ar' ? 'عملية شراء' : 'Purchase')}</div>
+                                      {(currentGoldPrice - (log.price || 0)) !== 0 && (
+                                         <div className={cn("text-[9px] font-black px-1.5 py-0.5 rounded-md flex items-center gap-0.5", 
+                                            (currentGoldPrice - (log.price || 0)) > 0 ? "bg-emerald-500/10 text-emerald-500" : "bg-rose-500/10 text-rose-500"
+                                         )}>
+                                            {(currentGoldPrice - (log.price || 0)) > 0 ? <TrendingUp className="w-2.5 h-2.5" /> : <TrendingDown className="w-2.5 h-2.5" />}
+                                            {Math.abs(((currentGoldPrice - (log.price || 0)) / (log.price || 1)) * 100).toFixed(1)}%
+                                         </div>
+                                      )}
+                                   </div>
                                 </div>
                              </div>
                              <div className="text-right flex items-center gap-6">
                                 <div className="hidden sm:block">
-                                   <div className="text-[10px] text-slate-500 font-bold uppercase">{language === 'ar' ? 'السعر' : 'Price'}</div>
-                                   <div className={cn("text-xs font-black", isDark ? "text-slate-300" : "text-slate-600")}>{log.price?.toLocaleString()}</div>
+                                   <div className="text-[10px] text-slate-500 font-bold uppercase text-right leading-tight">{language === 'ar' ? 'القيمة الحالية' : 'Current Value'}</div>
+                                   <div className={cn("text-xs font-black", (currentGoldPrice - (log.price || 0)) > 0 ? "text-emerald-500" : (currentGoldPrice - (log.price || 0)) < 0 ? "text-rose-500" : "text-slate-500")}>
+                                      {(log.weight * currentGoldPrice).toLocaleString()}
+                                   </div>
+                                </div>
+                                <div className="hidden sm:block border-l border-white/5 pl-6 text-right">
+                                   <div className="text-[10px] text-slate-500 font-bold uppercase opacity-50">{language === 'ar' ? 'سعر الشراء' : 'Buy Price'}</div>
+                                   <div className={cn("text-xs font-black opacity-30", isDark ? "text-slate-300" : "text-slate-600")}>{log.price?.toLocaleString()}</div>
                                 </div>
                                 <button 
                                   onClick={async () => {
@@ -1434,13 +1542,13 @@ export default function App() {
                        <CartesianGrid strokeDasharray="3 3" stroke={isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)"} vertical={false} />
                        <XAxis 
                          dataKey="month" 
-                         stroke={isDark ? "#475569" : "#94a3b8"} 
+                         stroke={isDark ? "#475569" : "#64748b"} 
                          fontSize={10} 
                          fontWeight="bold" 
                          tickFormatter={(val) => val.substring(0, 3)}
                        />
                        <YAxis 
-                         stroke={isDark ? "#475569" : "#94a3b8"} 
+                         stroke={isDark ? "#475569" : "#64748b"} 
                          fontSize={10} 
                          fontWeight="bold" 
                          tickFormatter={(val) => `${val/1000}k`}
@@ -1476,6 +1584,76 @@ export default function App() {
                  </ResponsiveContainer>
               </div>
 
+               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-12">
+                  <div className={cn("lg:col-span-2 rounded-[40px] p-8 border", isDark ? "bg-white/5 border-white/5" : "bg-slate-50 border-slate-100 shadow-sm")}>
+                     <h3 className="text-xs font-black uppercase tracking-widest text-slate-500 mb-8">{language === 'ar' ? 'تحليل المصاريف والادخار' : 'Savings vs Expenses Trend'}</h3>
+                     <div className="h-[300px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                           <BarChart data={stats?.computedEntries.slice(-6)}>
+                              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)"} />
+                              <XAxis dataKey="month" stroke={isDark ? "#475569" : "#64748b"} fontSize={10} fontWeight="bold" />
+                              <YAxis stroke={isDark ? "#475569" : "#64748b"} fontSize={10} fontWeight="bold" />
+                              <Tooltip contentStyle={{ backgroundColor: isDark ? '#000' : '#fff', borderRadius: '16px', border: 'none' }} />
+                              <Bar dataKey="expensesTotal" fill="#f43f5e" radius={[6, 6, 0, 0]} name={language === 'ar' ? 'المصاريف' : 'Expenses'} />
+                              <Bar dataKey="monthlySavings" fill="#10b981" radius={[6, 6, 0, 0]} name={language === 'ar' ? 'الادخار' : 'Savings'} />
+                           </BarChart>
+                        </ResponsiveContainer>
+                     </div>
+                  </div>
+                  <div className={cn("rounded-[40px] p-8 border flex flex-col items-center justify-center", isDark ? "bg-white/5 border-white/5" : "bg-slate-50 border-slate-100 shadow-sm")}>
+                     <h3 className="text-xs font-black uppercase tracking-widest text-slate-500 mb-8">{language === 'ar' ? 'توزيع المحفظة' : 'Portfolio Mix'}</h3>
+                     <div className="h-[250px] w-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                           <PieChart>
+                              <Pie
+                                 data={[
+                                    { name: language === 'ar' ? 'سيولة' : 'Cash', value: stats?.currentMonth?.cumulativeCash || 0, fill: '#64748b' },
+                                    { name: language === 'ar' ? 'ذهب' : 'Gold', value: stats?.totalGoldValue || 0, fill: '#fbbf24' }
+                                 ]}
+                                 innerRadius={70}
+                                 outerRadius={100}
+                                 paddingAngle={8}
+                                 dataKey="value"
+                                 stroke="none"
+                              >
+                                 <Cell fill={isDark ? "rgba(255,255,255,0.05)" : "#e2e8f0"} />
+                                 <Cell fill="#fbbf24" stroke={isDark ? "rgba(251, 191, 36, 0.2)" : "none"} strokeWidth={10} />
+                                 <Label 
+                                    content={({ viewBox }) => {
+                                       const { cx, cy } = viewBox as any;
+                                       const total = (stats?.currentMonth?.cumulativeCash || 0) + (stats?.totalGoldValue || 0) || 1;
+                                       const goldPerc = Math.round(((stats?.totalGoldValue || 0) / total) * 100);
+                                       return (
+                                          <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central">
+                                             <tspan x={cx} y={cy - 5} className={cn("text-3xl font-black italic", isDark ? "fill-white" : "fill-slate-900")}>
+                                                {goldPerc}%
+                                             </tspan>
+                                             <tspan x={cx} y={cy + 20} className="fill-slate-500 text-[10px] font-black uppercase tracking-widest">{language === 'ar' ? 'ذهب' : 'GOLD'}</tspan>
+                                          </text>
+                                       );
+                                    }}
+                                 />
+                              </Pie>
+                              <Tooltip 
+                                 contentStyle={{ backgroundColor: isDark ? '#000' : '#fff', border: 'none', borderRadius: '16px', boxShadow: '0 10px 20px rgba(0,0,0,0.2)' }}
+                                 itemStyle={{ color: '#fbbf24', fontWeight: '900', fontSize: '12px' }}
+                              />
+                           </PieChart>
+                        </ResponsiveContainer>
+                     </div>
+                     <div className="flex gap-4 mt-6">
+                        <div className="flex items-center gap-2">
+                           <div className="w-2 h-2 rounded-full bg-slate-400 opacity-30" />
+                           <span className="text-[8px] font-black uppercase text-slate-500">{language === 'ar' ? 'سيولة' : 'Cash'}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                           <div className="w-2 h-2 rounded-full bg-brand-yellow" />
+                           <span className="text-[8px] font-black uppercase text-slate-500">{language === 'ar' ? 'ذهب' : 'Gold'}</span>
+                        </div>
+                     </div>
+                  </div>
+               </div>
+
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
                  <div className={cn("p-6 rounded-3xl border flex flex-col justify-between", isDark ? "bg-white/5 border-white/5" : "bg-slate-50 border-slate-100")}>
                     <div>
@@ -1509,7 +1687,22 @@ export default function App() {
 
                  <div className={cn("p-6 rounded-3xl border flex flex-col justify-between", isDark ? "bg-white/5 border-white/5" : "bg-slate-50 border-slate-100")}>
                     <div>
-                       <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">{language === 'ar' ? 'التوقع السنوي' : 'Annual Outlook'}</div>
+                       <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">{language === 'ar' ? 'توزيع الثروة' : 'Wealth Split'}</div>
+                        <div className="flex items-center gap-2 mt-2">
+                           <div className="h-1.5 flex-1 rounded-full bg-brand-yellow" style={{ width: `${Math.max(10, ((stats?.totalGoldValue || 0) / ((stats?.currentMonth?.cumulativeCash || 0) + (stats?.totalGoldValue || 0) || 1)) * 100)}%` }} title="Gold" />
+                           <div className="h-1.5 flex-1 rounded-full bg-slate-500" style={{ width: `${Math.max(10, ((stats?.currentMonth?.cumulativeCash || 0) / ((stats?.currentMonth?.cumulativeCash || 0) + (stats?.totalGoldValue || 0) || 1)) * 100)}%` }} title="Cash" />
+                        </div>
+                        <div className="flex justify-between text-[7px] font-black uppercase mt-1">
+                           <span className="text-brand-yellow">Gold</span>
+                           <span className="text-slate-500">Cash</span>
+                        </div>
+                     </div>
+                     <p className="text-[8px] text-slate-500 font-medium mt-2">{language === 'ar' ? 'نسبة الذهب والسيولة' : 'Ratio of gold vs cash'}</p>
+                  </div>
+
+                  <div className={cn("p-6 rounded-3xl border flex flex-col justify-between", isDark ? "bg-white/5 border-white/5" : "bg-slate-50 border-slate-100 shadow-sm")}>
+                     <div>
+                        <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">{language === 'ar' ? 'التوقع السنوي' : 'Annual Outlook'}</div>
                        <div className="text-2xl font-black italic">
                           {( (stats?.currentMonth?.cumulativeCash || 0) + (profile?.savingsTarget || 0) * (12 - stats?.computedEntries.length) ).toLocaleString()} <span className="text-xs">EGP</span>
                        </div>
@@ -1617,93 +1810,285 @@ export default function App() {
           </motion.div>
 
           {/* Input Controls */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-               <div className={cn(
-                 "rounded-[40px] p-8 border space-y-6 transition-all duration-500",
-                 isDark ? "glass border-white/10" : "bg-white border-slate-200 shadow-sm"
-               )}>
-                  <h3 className={cn("text-xl font-black italic", isDark ? "text-white" : "text-slate-900")}>
-                     {language === 'ar' ? 'تسجيل معاملة' : 'Record Transaction'}
-                  </h3>
-                  <div className="relative">
-                    <input 
-                      type="number"
-                      value={dailyInput}
-                      onChange={(e) => setDailyInput(e.target.value)}
-                      placeholder="0.00"
-                      className={cn(
-                        "w-full h-20 border-2 rounded-3xl px-8 text-3xl font-black outline-none transition-all",
-                        isDark ? "bg-black/40 border-white/10 text-white focus:border-white/50" : "bg-white border-slate-200 text-slate-900 focus:border-slate-400"
-                      )}
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                     <button 
-                       onClick={async () => {
-                         const val = Number(dailyInput);
-                         if (!val || isNaN(val)) return;
-                         try {
-                           await updateDoc(doc(db, 'profiles', user.uid), { dailyBalance: (profile?.dailyBalance || 0) + val });
-                           setDailyInput('');
-                         } catch (err) {
-                           handleFirestoreError(err, OperationType.UPDATE, 'daily-plus');
-                         }
-                       }}
-                       className="h-20 bg-emerald-500/10 border border-emerald-500/30 rounded-3xl flex items-center justify-center gap-3 text-emerald-400 font-black hover:bg-emerald-500/20 active:scale-95 transition-all"
-                     >
-                       <PlusCircle className="w-6 h-6" />
-                       {language === 'ar' ? 'إضافة' : 'Add'}
-                     </button>
-                     <button 
-                       onClick={async () => {
-                         const val = Number(dailyInput);
-                         if (!val || isNaN(val)) return;
-                         try {
-                           await updateDoc(doc(db, 'profiles', user.uid), { dailyBalance: (profile?.dailyBalance || 0) - val });
-                           setDailyInput('');
-                         } catch (err) {
-                           handleFirestoreError(err, OperationType.UPDATE, 'daily-minus');
-                         }
-                       }}
-                       className="h-20 bg-brand-red/10 border border-brand-red/30 rounded-3xl flex items-center justify-center gap-3 text-brand-red font-black hover:bg-brand-red/20 active:scale-95 transition-all"
-                     >
-                       <MinusCircle className="w-6 h-6" />
-                       {language === 'ar' ? 'خصم' : 'Subtract'}
-                     </button>
-                  </div>
-               </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+             <div className={cn(
+                "rounded-[40px] p-8 border space-y-6 transition-all duration-500",
+                isDark ? "glass border-white/10" : "bg-white border-slate-200 shadow-sm"
+             )}>
+                <h3 className={cn("text-xl font-black italic", isDark ? "text-white" : "text-slate-900")}>
+                   {language === 'ar' ? 'تسجيل معاملة' : 'Record Transaction'}
+                </h3>
+                <div className="relative">
+                  <input 
+                    type="number"
+                    value={dailyInput}
+                    onChange={(e) => setDailyInput(e.target.value)}
+                    placeholder="0.00"
+                    className={cn(
+                      "w-full h-20 border-2 rounded-3xl px-8 text-3xl font-black outline-none transition-all",
+                      isDark ? "bg-black/40 border-white/10 text-white focus:border-white/50" : "bg-white border-slate-200 text-slate-900 focus:border-slate-400"
+                    )}
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                   <button 
+                     onClick={async () => {
+                       const val = Number(dailyInput);
+                       if (!val || isNaN(val)) return;
+                       try {
+                         await updateDoc(doc(db, 'profiles', user.uid), { dailyBalance: (profile?.dailyBalance || 0) + val });
+                         setDailyInput('');
+                       } catch (err) {
+                         handleFirestoreError(err, OperationType.UPDATE, 'daily-plus');
+                       }
+                     }}
+                     className={cn(
+                       "h-20 border rounded-3xl flex items-center justify-center gap-3 font-black active:scale-95 transition-all w-full",
+                       isDark ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20" : "bg-emerald-50 border-emerald-200 text-emerald-600 hover:bg-emerald-100"
+                     )}
+                   >
+                     <PlusCircle className="w-6 h-6" />
+                     {language === 'ar' ? 'إضافة' : 'Add'}
+                   </button>
+                   <button 
+                     onClick={async () => {
+                       const val = Number(dailyInput);
+                       if (!val || isNaN(val)) return;
+                       try {
+                         await updateDoc(doc(db, 'profiles', user.uid), { dailyBalance: (profile?.dailyBalance || 0) - val });
+                         setDailyInput('');
+                       } catch (err) {
+                         handleFirestoreError(err, OperationType.UPDATE, 'daily-minus');
+                       }
+                     }}
+                     className={cn(
+                       "h-20 border rounded-3xl flex items-center justify-center gap-3 font-black active:scale-95 transition-all w-full",
+                       isDark ? "bg-brand-red/10 border-brand-red/30 text-brand-red hover:bg-brand-red/20" : "bg-red-50 border-red-200 text-red-600 hover:bg-red-100"
+                     )}
+                   >
+                     <MinusCircle className="w-6 h-6" />
+                     {language === 'ar' ? 'خصم' : 'Subtract'}
+                   </button>
+                </div>
+             </div>
 
-               <div className={cn(
-                 "rounded-[40px] p-8 border flex flex-col justify-center gap-6 transition-all duration-500",
-                 isDark ? "glass border-white/10" : "bg-white border-slate-200 shadow-sm"
-               )}>
+             <div className={cn(
+                "rounded-[40px] p-8 border space-y-6 transition-all duration-500 flex flex-col justify-between",
+                isDark ? "glass border-white/10" : "bg-white border-slate-200 shadow-sm"
+             )}>
+                <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <TrendingDown className="w-6 h-6 text-brand-red" />
+                    <Goal className="w-6 h-6 text-brand-red" />
                     <h3 className={cn("text-xl font-black italic uppercase tracking-tight", isDark ? "text-white" : "text-slate-900")}>
-                      {language === 'ar' ? 'محاكي التضخم' : 'Inflation Simulator'}
+                      {language === 'ar' ? 'متعقب الأهداف المالية' : 'Financial Goal Tracker'}
                     </h3>
                   </div>
+                  
+                  {!isEditingTargets ? (
+                    <button
+                      onClick={() => {
+                        vibrate(5);
+                        setEditTargetCash((profile?.targetCash || 359300).toString());
+                        setEditTargetGold((profile?.targetGold || 44.91).toString());
+                        setIsEditingTargets(true);
+                      }}
+                      className={cn(
+                        "p-2 rounded-xl border transition-all duration-300",
+                        isDark 
+                          ? "bg-white/5 border-white/10 text-slate-400 hover:text-white hover:bg-white/10" 
+                          : "bg-slate-50 border-slate-200 text-slate-500 hover:text-slate-900 hover:bg-slate-100"
+                      )}
+                      title={language === 'ar' ? 'تعديل المستهدفات' : 'Edit Target Goals'}
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        vibrate(5);
+                        setIsEditingTargets(false);
+                      }}
+                      className={cn(
+                        "p-2 rounded-xl border transition-all duration-300",
+                        isDark 
+                          ? "bg-white/5 border-white/10 text-slate-400 hover:text-white hover:bg-white/10" 
+                          : "bg-slate-50 border-slate-200 text-slate-500 hover:text-slate-900 hover:bg-slate-100"
+                      )}
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {isEditingTargets ? (
                   <div className="space-y-4">
-                    <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest leading-loose">
-                      {language === 'ar' 
-                        ? 'إذا كان لديك 100,000 ج.م اليوم، فكم ستكون قيمتها الشرائية بعد سنة بافتراض تضخم 35%؟' 
-                        : 'If you have 100,000 EGP today, what will be its purchasing power in 1 year assuming 35% inflation?'}
+                    {/* Cash Target Input */}
+                    <div>
+                      <label className={cn("block text-[10px] font-black uppercase tracking-wider mb-1", isDark ? "text-slate-400" : "text-slate-500")}>
+                        {language === 'ar' ? 'المستهدف النقدي الإجمالي (ج.م)' : 'Total Cash Target (EGP)'}
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="number"
+                          value={editTargetCash}
+                          onChange={(e) => setEditTargetCash(e.target.value)}
+                          className={cn(
+                            "w-full px-4 py-3 rounded-2xl border text-sm font-black transition-all duration-300 focus:outline-none focus:ring-2",
+                            isDark 
+                              ? "bg-white/5 border-white/10 text-white focus:ring-brand-red focus:border-transparent" 
+                              : "bg-slate-50 border-slate-200 text-slate-800 focus:ring-rose-500 focus:border-transparent"
+                          )}
+                        />
+                      </div>
                     </div>
-                    <div className="p-6 bg-brand-red/5 border border-brand-red/20 rounded-[32px] text-center">
-                       <div className="text-sm font-bold text-slate-400 mb-1">{language === 'ar' ? 'القيمة المستقبلية المقدرة' : 'Estimated Future Value'}</div>
-                       <div className={cn(
-                         "text-4xl font-black text-brand-red italic transition-all duration-500",
-                         !showValues && "blur-lg opacity-50 scale-95"
-                       )}>
-                         65,000 <span className="text-xs">EGP</span>
-                       </div>
-                       <div className="text-[9px] text-slate-500 mt-2 font-bold uppercase">
-                         {language === 'ar' ? 'الذهب هو الملاذ الآمن الوحيد لتجنب هذا التآكل.' : 'Gold is the only safe haven to avoid this erosion.'}
-                       </div>
+
+                    {/* Gold Target Input */}
+                    <div>
+                      <label className={cn("block text-[10px] font-black uppercase tracking-wider mb-1", isDark ? "text-slate-400" : "text-slate-500")}>
+                        {language === 'ar' ? 'مستهدف الذهب الإجمالي (جرام)' : 'Total Gold Target (Grams)'}
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="number"
+                          value={editTargetGold}
+                          onChange={(e) => setEditTargetGold(e.target.value)}
+                          className={cn(
+                            "w-full px-4 py-3 rounded-2xl border text-sm font-black transition-all duration-300 focus:outline-none focus:ring-2",
+                            isDark 
+                              ? "bg-white/5 border-white/10 text-white focus:ring-brand-red focus:border-transparent" 
+                              : "bg-slate-50 border-slate-200 text-slate-800 focus:ring-rose-500 focus:border-transparent"
+                          )}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Action buttons */}
+                    <div className="grid grid-cols-2 gap-3 pt-2">
+                      <button
+                        onClick={async () => {
+                          vibrate(5);
+                          setIsEditingTargets(false);
+                        }}
+                        className={cn(
+                          "py-2.5 rounded-xl border text-xs font-black transition-all duration-300 text-center",
+                          isDark 
+                            ? "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10" 
+                            : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
+                        )}
+                      >
+                        {language === 'ar' ? 'إلغاء' : 'Cancel'}
+                      </button>
+
+                      <button
+                        onClick={async () => {
+                          vibrate(5);
+                          const newCash = Number(editTargetCash);
+                          const newGold = Number(editTargetGold);
+                          if (!isNaN(newCash) && !isNaN(newGold)) {
+                            try {
+                              await updateDoc(doc(db, 'profiles', user.uid), { 
+                                targetCash: newCash, 
+                                targetGold: newGold 
+                              });
+                              setIsEditingTargets(false);
+                            } catch (err) {
+                              handleFirestoreError(err, OperationType.UPDATE, 'goals-update');
+                            }
+                          }
+                        }}
+                        className="py-2.5 rounded-xl bg-brand-red hover:bg-brand-red/90 text-white text-xs font-black transition-all duration-300 flex items-center justify-center gap-1.5 shadow-md shadow-brand-red/10"
+                      >
+                        <Save className="w-3.5 h-3.5" />
+                        {language === 'ar' ? 'حفظ الأهداف' : 'Save Goals'}
+                      </button>
                     </div>
                   </div>
-               </div>
-            </div>
+                ) : (
+                  <div className="space-y-5">
+                    {/* Cash target metrics */}
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center text-xs">
+                        <span className={cn("font-bold", isDark ? "text-slate-400" : "text-slate-500")}>
+                          {language === 'ar' ? 'القيمة المتوفرة مقارنة بالهدف' : 'Savings vs Cash Target'}
+                        </span>
+                        <span className="font-black text-brand-red italic">
+                          {stats ? Math.round(stats.progressPercentage) : 0}%
+                        </span>
+                      </div>
+                      
+                      {/* Cash progress bar */}
+                      <div className={cn("relative w-full h-3 rounded-full overflow-hidden", isDark ? "bg-white/5" : "bg-slate-100")}>
+                        <div 
+                          className="absolute top-0 left-0 h-full rounded-full bg-gradient-to-r from-rose-500 to-rose-600 transition-all duration-1000 shadow-[0_0_12px_rgba(239,68,68,0.4)]"
+                          style={{ width: `${stats ? Math.min(stats.progressPercentage, 100) : 0}%` }}
+                        />
+                      </div>
+
+                      <div className="flex justify-between text-[10px] font-black uppercase">
+                        <span className={cn(isDark ? "text-slate-300" : "text-slate-900")}>
+                          {(!showValues) ? '••••' : (stats?.currentSavings || 0).toLocaleString()} EGP
+                        </span>
+                        <span className="text-slate-500">
+                          {language === 'ar' ? 'المستهدف: ' : 'Target: '} {(profile?.targetCash || 359300).toLocaleString()} EGP
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Gold target metrics */}
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center text-xs">
+                        <span className={cn("font-bold", isDark ? "text-slate-400" : "text-slate-500")}>
+                          {language === 'ar' ? 'الذهب المخزن مقارنة بالهدف' : 'Gold Logged vs Target'}
+                        </span>
+                        <span className="font-black text-yellow-500 italic">
+                          {stats && profile && profile.targetGold 
+                            ? Math.round(Math.min(((stats.totalGoldLogged || 0) / (profile.targetGold || 44.91)) * 100, 100)) 
+                            : 0}%
+                        </span>
+                      </div>
+                      
+                      {/* Gold progress bar */}
+                      <div className={cn("relative w-full h-3 rounded-full overflow-hidden", isDark ? "bg-white/5" : "bg-slate-100")}>
+                        <div 
+                          className="absolute top-0 left-0 h-full rounded-full bg-gradient-to-r from-amber-400 to-yellow-500 transition-all duration-1000 shadow-[0_0_12px_rgba(245,158,11,0.4)]"
+                          style={{ 
+                            width: `${stats && profile && profile.targetGold 
+                              ? Math.min(((stats.totalGoldLogged || 0) / (profile.targetGold || 44.91)) * 100, 100) 
+                              : 0}%` 
+                          }}
+                        />
+                      </div>
+
+                      <div className="flex justify-between text-[10px] font-black uppercase">
+                        <span className={cn(isDark ? "text-slate-300" : "text-slate-900")}>
+                          {(!showValues) ? '••••' : (stats?.totalGoldLogged || 0).toFixed(2)} g
+                        </span>
+                        <span className="text-slate-500">
+                          {language === 'ar' ? 'المستهدف: ' : 'Target: '} {(profile?.targetGold || 44.91).toFixed(2)} g
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Status Note */}
+                    <div className={cn("p-4 rounded-2xl text-[10px] text-center font-bold tracking-wide border", isDark ? "bg-white/5 border-white/5 text-slate-300" : "bg-slate-50 border-slate-100 text-slate-600")}>
+                      {language === 'ar' ? (
+                        stats && stats.progressPercentage >= 100 ? (
+                          "🎉 رائع! لقد حققت هدفك المالي بالكامل بنسبة 100%!"
+                        ) : (
+                          `أنت على بعد ${Math.max(0, 100 - Math.round(stats?.progressPercentage || 0))}% من تحقيق هدفك المالي النقدي.`
+                        )
+                      ) : (
+                        stats && stats.progressPercentage >= 100 ? (
+                          "🎉 Spectacular! You have achieved 100% of your monetary goal!"
+                        ) : (
+                          `You are ${Math.max(0, 100 - Math.round(stats?.progressPercentage || 0))}% away from achieving your EGP goal.`
+                        )
+                      )}
+                    </div>
+                  </div>
+                )}
+             </div>
+          </div>
 
             {/* Interactive Roadmap */}
             <div className={cn("rounded-[40px] p-8 border transition-all", isDark ? "glass border-white/10" : "bg-white border-slate-200 shadow-sm")}>
@@ -1807,10 +2192,7 @@ export default function App() {
             animate={{ opacity: 1, scale: 1 }}
             className="space-y-8"
           >
-            <div className={cn(
-              "rounded-[40px] p-8 border transition-all",
-              isDark ? "glass border-white/10" : "bg-white border-slate-200 shadow-sm"
-            )}>
+            <div className="space-y-8">
               <div className="flex justify-between items-center mb-8">
                 <div className="space-y-1">
                   <h2 className={cn("text-3xl font-black italic uppercase tracking-tighter", isDark ? "text-white" : "text-slate-900")}>
@@ -1818,9 +2200,28 @@ export default function App() {
                   </h2>
                   <div className="flex items-center gap-2">
                     <Calendar className="w-3 h-3 text-slate-500" />
-                    <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">
-                      {selectedEntry?.month} {selectedEntry?.year}
-                    </span>
+                    <select
+                      value={selectedMonthId || ''}
+                      onChange={(e) => {
+                        setSelectedMonthId(e.target.value);
+                        vibrate(5);
+                      }}
+                      className={cn(
+                        "text-[10px] font-bold uppercase tracking-widest bg-transparent border-0 border-b border-dashed border-slate-500/50 hover:border-slate-500 pb-0.5 outline-none cursor-pointer pr-1 transition-all",
+                        isDark ? "text-slate-300 [color-scheme:dark]" : "text-slate-700 bg-white"
+                      )}
+                      style={{ direction: language === 'ar' ? 'rtl' : 'ltr' }}
+                    >
+                      {entries.map((entry) => (
+                        <option 
+                          key={entry.id} 
+                          value={entry.id}
+                          className={isDark ? "bg-slate-950 text-white" : "bg-white text-slate-900"}
+                        >
+                          {entry.month} {entry.year} ({(entry.expenses || []).length} {language === 'ar' ? 'مصروف' : 'Expenses'})
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 </div>
                 <button 
@@ -2664,6 +3065,42 @@ export default function App() {
                      </div>
                   </div>
 
+                  {/* Data Converter & Import Section */}
+                  <div className="space-y-4 font-sans mb-12">
+                     <div className="flex items-center gap-2 mb-2">
+                        <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
+                        <span className={cn("text-[10px] font-black uppercase tracking-widest", isDark ? "text-slate-500" : "text-slate-400")}>
+                           {language === 'ar' ? 'استيراد وتحويل البيانات' : 'DATA CONVERTER & IMPORT'}
+                        </span>
+                     </div>
+                     <button 
+                        onClick={() => {
+                          setCurrentProject('converter');
+                          vibrate(5);
+                        }}
+                        className={cn(
+                          "w-full p-8 border rounded-[32px] flex items-center gap-6 transition-all group relative overflow-hidden",
+                          isDark ? "bg-white/3 border-white/5 hover:bg-white/5 hover:border-white/20" : "bg-slate-50 border-slate-100 hover:bg-white hover:border-slate-200"
+                        )}
+                      >
+                         <div className={cn(
+                           "w-14 h-14 rounded-[20px] flex items-center justify-center transition-transform group-hover:scale-110",
+                           isDark ? "bg-white/5 text-emerald-400" : "bg-white text-emerald-600 shadow-sm"
+                         )}>
+                            <FileSpreadsheet className="w-7 h-7" />
+                         </div>
+                         <div className="text-left flex-1 font-sans">
+                            <div className={cn("text-lg font-black italic uppercase mb-1", isDark ? "text-white" : "text-slate-900")}>
+                               {language === 'ar' ? 'تحميل كشف الحساب والملفات' : 'Statement & File Converter'}
+                            </div>
+                            <div className="text-[10px] text-slate-500 font-bold uppercase mt-1 leading-snug">
+                               {language === 'ar' ? 'تحويل كلي للمصروفات والذهب والنسخ الاحتياطي في الوقت الحقيقي' : 'Convert CSV, Excel bank exports, or restore JSON archives with real-time tracking'}
+                            </div>
+                         </div>
+                         <ArrowRight className={cn("w-6 h-6 transition-all group-hover:translate-x-2", isDark ? "text-white/20" : "text-slate-300")} />
+                      </button>
+                  </div>
+
                   <div className="mt-8">
                      <button 
                         onClick={logout}
@@ -2682,50 +3119,45 @@ export default function App() {
                         <ArrowRight className="w-6 h-6 text-brand-red opacity-50 group-hover:translate-x-3 transition-all relative z-10" />
                      </button>
                   </div>
+
+                  <div className="mt-4">
+                     <button 
+                        onClick={handleResetData}
+                        className="w-full p-8 border border-red-500/20 bg-red-500/5 rounded-[32px] flex items-center justify-between hover:bg-red-500/10 transition-all group overflow-hidden relative"
+                     >
+                        <div className="absolute right-0 top-0 w-32 h-32 bg-red-500/5 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none" />
+                        <div className="flex items-center gap-6 relative z-10">
+                           <div className="w-14 h-14 bg-red-500/10 rounded-[20px] flex items-center justify-center">
+                              <RotateCcw className="w-8 h-8 text-red-500" />
+                           </div>
+                           <div className="text-left font-sans">
+                              <div className="text-lg font-black italic uppercase text-red-500 leading-none">{language === 'ar' ? 'إعادة ضبط البيانات والمدخرات' : 'Reset Data & Savings'}</div>
+                              <div className="text-[10px] font-bold text-red-500/50 uppercase tracking-widest mt-1">{language === 'ar' ? 'مسح كل المعاملات والمدخرات والبدء من جديد' : 'Wipe all transaction logs, savings and start over'}</div>
+                           </div>
+                        </div>
+                        <ArrowRight className="w-6 h-6 text-red-500 opacity-50 group-hover:translate-x-3 transition-all relative z-10" />
+                     </button>
+                  </div>
                </div>
             </div>
          </div>
       ) : (
-        <div className="hidden" />
+        currentProject === 'converter' ? (
+          <FileConverter
+            user={user}
+            db={db}
+            profile={profile}
+            entries={entries}
+            language={language}
+            isDark={isDark}
+            setCurrentProject={setCurrentProject}
+          />
+        ) : (
+          <div className="hidden" />
+        )
       )}
 
-      <div className="fixed bottom-6 left-6 flex flex-col gap-3 z-40">
-        <button 
-          onClick={exportData}
-          title={language === 'ar' ? 'تحميل نسخة احتياطية' : 'Download Backup'}
-          className={cn(
-            "w-14 h-14 rounded-2xl flex items-center justify-center transition-all border backdrop-blur-md shadow-2xl",
-            isDark 
-              ? "bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border-emerald-500/20 shadow-emerald-500/10" 
-              : "bg-emerald-50 hover:bg-emerald-100 text-emerald-600 border-emerald-100 shadow-emerald-100"
-          )}
-        >
-          <Download className="w-5 h-5" />
-        </button>
-        <button 
-          onClick={handleResetData}
-          title={language === 'ar' ? 'إعادة ضبط البيانات' : 'Reset Data'}
-          className={cn(
-            "w-14 h-14 rounded-2xl flex items-center justify-center transition-all border backdrop-blur-md shadow-2xl",
-            isDark 
-              ? "bg-white/10 hover:bg-white/20 text-white border-white/20 shadow-white/10" 
-              : "bg-white hover:bg-slate-50 text-slate-900 border-slate-200 shadow-slate-200"
-          )}
-        >
-          <RotateCcw className="w-5 h-5" />
-        </button>
-        <button 
-          onClick={logout}
-          className={cn(
-            "w-14 h-14 border rounded-2xl flex items-center justify-center transition-all backdrop-blur-md",
-            isDark
-              ? "bg-brand-card border-brand-border text-slate-400 hover:text-white"
-              : "bg-white border-slate-200 text-slate-400 hover:text-slate-900"
-          )}
-        >
-          <LogOut className="w-6 h-6" />
-        </button>
-      </div>
+
 
       {/* Update Modals */}
       <AnimatePresence>
@@ -2936,81 +3368,7 @@ export default function App() {
              </div>
           </div>
         )}
-
-        {isAddingGoldLog && (
-          <div className="fixed inset-0 z-50 overflow-y-auto">
-             <motion.div 
-               initial={{ opacity: 0 }}
-               animate={{ opacity: 1 }}
-               exit={{ opacity: 0 }}
-               onClick={() => setIsAddingGoldLog(false)}
-               className="fixed inset-0 bg-black/80 backdrop-blur-sm"
-             />
-             <div className="min-h-full flex items-center justify-center p-4">
-                <motion.div 
-                  initial={{ opacity: 0, scale: 0.9, y: 20 }}
-                  animate={{ opacity: 1, scale: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.9, y: 20 }}
-                  className="relative glass max-w-sm w-full p-8 rounded-[40px] shadow-2xl border border-brand-border"
-                >
-                   <h3 className="text-xl font-black mb-1">{language === 'ar' ? 'تسجيل حيازة ذهب' : 'Log Physical Gold'}</h3>
-                   <p className="text-xs text-slate-500 mb-6 font-bold">{language === 'ar' ? 'تسجيل كمية الذهب التي اشتريتها فعلياً' : 'Record gold quantity you physically bought'}</p>
-                   
-                   <div className="space-y-6">
-                      <div className="grid grid-cols-2 gap-4">
-                         <div className="space-y-2">
-                           <label className="text-[10px] text-slate-500 font-bold uppercase tracking-widest block">{language === 'ar' ? 'الوزن (Unit)' : 'Weight (Unit)'}</label>
-                           <input 
-                             autoFocus
-                             type="number"
-                             placeholder="0.00"
-                             value={newGoldLog.weight}
-                             onChange={(e) => setNewGoldLog({ ...newGoldLog, weight: e.target.value })}
-                             className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-xl font-bold focus:border-white outline-none text-center"
-                           />
-                         </div>
-                         <div className="space-y-2">
-                           <label className="text-[10px] text-slate-500 font-bold uppercase tracking-widest block">{language === 'ar' ? 'سعر الوحدة' : 'Price/Unit'}</label>
-                           <input 
-                             type="number"
-                             placeholder={currentGoldPrice?.toString()}
-                             value={newGoldLog.price}
-                             onChange={(e) => setNewGoldLog({ ...newGoldLog, price: e.target.value })}
-                             className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-xl font-bold focus:border-white outline-none text-center text-emerald-400 placeholder:text-emerald-400/30"
-                           />
-                         </div>
-                      </div>
-                      <div className="space-y-2">
-                         <label className="text-[10px] text-slate-500 font-bold uppercase tracking-widest block">{language === 'ar' ? 'ملاحظات (اختياري)' : 'Notes (Optional)'}</label>
-                         <input 
-                           type="text"
-                           placeholder="..."
-                           value={newGoldLog.notes}
-                           onChange={(e) => setNewGoldLog({ ...newGoldLog, notes: e.target.value })}
-                           className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-[10px] font-bold focus:border-white outline-none"
-                         />
-                      </div>
-                      <div className="flex gap-3">
-                         <button 
-                           onClick={handleAddGoldLog}
-                           disabled={!newGoldLog.weight}
-                           className="flex-1 bg-white text-black py-4 rounded-2xl font-black hover:opacity-90 transition-all active:scale-95 disabled:opacity-30"
-                         >
-                           {language === 'ar' ? 'تسجيل العملية' : 'Record Entry'}
-                         </button>
-                         <button 
-                           onClick={() => setIsAddingGoldLog(false)}
-                           className="px-6 py-4 rounded-2xl bg-white/5 text-slate-400 font-bold hover:bg-white/10 transition-all"
-                         >
-                           {language === 'ar' ? 'إلغاء' : 'Cancel'}
-                         </button>
-                      </div>
-                   </div>
-                </motion.div>
-             </div>
-          </div>
-        )}
-
+        
         {isAddingExpense && (
           <div className="fixed inset-0 z-50 overflow-y-auto">
              <motion.div 
@@ -3279,7 +3637,7 @@ function NavButton({ active, onClick, icon, label, isDark }: {
       className={cn(
         "w-full flex items-center gap-4 px-4 py-4 rounded-3xl transition-all duration-300",
         active 
-          ? (isDark ? "bg-brand-yellow text-black shadow-lg shadow-brand-yellow/20" : "bg-brand-bg text-white shadow-lg shadow-brand-bg/20") 
+          ? (isDark ? "bg-brand-yellow text-black shadow-lg shadow-brand-yellow/20" : "bg-brand-primary text-white shadow-lg shadow-brand-primary/20") 
           : (isDark ? "text-slate-400 hover:bg-white/5 hover:text-white" : "text-slate-500 hover:bg-slate-100 hover:text-slate-900")
       )}
     >
